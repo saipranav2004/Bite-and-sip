@@ -8,8 +8,10 @@ import { unitPrice } from '../../lib/pricing'
 import type { MenuItem } from '../../lib/types'
 
 export function ItemSheet({
-  item, categoryName, open, onClose, onAdd, disabled,
+  item, categoryName, open, onClose, onAdd, disabled, room = null,
 }: {
+  /** Units of a tracked item still available after the cart (null = no limit). */
+  room?: number | null
   item: MenuItem | null
   categoryName?: string
   open: boolean
@@ -26,7 +28,9 @@ export function ItemSheet({
 
   if (!item) return null
   const each = unitPrice(item, addonIds)
-  const canAdd = item.is_available && !disabled
+  const max = room === null ? 20 : Math.min(20, room)
+  const count = Math.min(qty, Math.max(1, max))
+  const canAdd = item.is_available && !disabled && max > 0
 
   return (
     <Dialog
@@ -35,18 +39,18 @@ export function ItemSheet({
       labelledBy={titleId}
       footer={
         <div className="flex items-center gap-3">
-          <QuantityStepper value={qty} onChange={setQty} label={item.name} />
+          <QuantityStepper value={count} onChange={setQty} max={Math.max(1, max)} label={item.name} />
           <Button
             size="lg"
             className="flex-1"
             disabled={!canAdd}
             onClick={() => {
               flyToCart(photo.current)
-              onAdd(addonIds, qty, note)
+              onAdd(addonIds, count, note)
               onClose()
             }}
           >
-            {item.is_available ? `Add to cart · ${money(each * qty)}` : 'Sold out'}
+            {!item.is_available ? 'Sold out' : max <= 0 ? 'No more left' : `Add to cart · ${money(each * count)}`}
           </Button>
         </div>
       }

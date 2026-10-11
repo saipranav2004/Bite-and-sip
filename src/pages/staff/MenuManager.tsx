@@ -1,14 +1,15 @@
-import { useId, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react'
 import { backend } from '../../backend'
 import type { MenuItemInput } from '../../backend/types'
+import { PageBody, PageHeader } from '../../components/admin'
 import { FoodImage } from '../../components/FoodArt'
 import { IconEdit, IconImage, IconPlus, IconSearch, IconTrash } from '../../components/icons'
 import { Banner, Button, Dialog, EmptyState, Spinner, Switch, useToast, VegMark } from '../../components/ui'
 import { friendlyError } from '../../lib/errors'
-import { money } from '../../lib/format'
+import { money, percent } from '../../lib/format'
 import { prepareMenuPhoto } from '../../lib/image'
 import { isRemovableImage } from '../../lib/images'
-import type { Category, MenuItem } from '../../lib/types'
+import type { Category, Costs, MenuItem } from '../../lib/types'
 import { cleanText } from '../../lib/validation'
 import { usePublicData } from '../../state/publicData'
 import { useStaffSession } from '../../state/staffSession'
@@ -22,13 +23,29 @@ export function MenuManager() {
   const [catsOpen, setCatsOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [pending, setPending] = useState<Set<string>>(new Set())
+  const [costs, setCosts] = useState<Costs | null>(null)
+  const [missingOnly, setMissingOnly] = useState(false)
+
+  const loadCosts = useCallback(async () => {
+    if (!isOwner) return
+    try {
+      setCosts(await backend.getCosts())
+    } catch {
+      setCosts(null)
+    }
+  }, [isOwner])
+  useEffect(() => {
+    void loadCosts()
+  }, [loadCosts])
 
   const categories = useMemo(() => (data ? [...data.menu.categories].sort((a, b) => a.sort_order - b.sort_order) : []), [data])
   if (!data) return <div className="grid place-items-center py-24"><Spinner label="Loading menu" /></div>
 
   const q = query.trim().toLowerCase()
-  const items = data.menu.items.filter((i) => !q || i.name.toLowerCase().includes(q))
+  const missing = costs ? data.menu.items.filter((i) => costs.items[i.id] === undefined) : []
+  const items = data.menu.items.filter((i) => (!q || i.name.toLowerCase().includes(q)) && (!missingOnly || missing.includes(i)))
   const soldOut = data.menu.items.filter((i) => !i.is_available).length
+  const stockOf = (id: string) => data.stock.find((s) => s.menu_item_id === id)
 
   async function toggle(key: string, fn: () => Promise<void>, msg: string) {
     setPending((p) => new Set(p).add(key))
@@ -48,40 +65,57 @@ export function MenuManager() {
   }
 
   return (
-    <main className="mx-auto max-w-5xl px-3 pt-3 pb-12 sm:px-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="mr-auto">
-          <h1 className="text-xl font-extrabold">Menu</h1>
-          <p className="text-sm text-muted">
+    <PageBody>
+      <PageHeader
+        title="Menu"
+        subtitle={
+          <>
             {data.menu.items.length} items · {soldOut} sold out
             {!isOwner && ' · You can mark items sold out or back in stock.'}
-          </p>
-        </div>
-        {isOwner && (
-          <>
-            <Button variant="secondary" onClick={() => setCatsOpen(true)}>Categories</Button>
-            <Button onClick={() => setEditing('new')}>
-              <IconPlus size={18} /> Add item
-            </Button>
           </>
-        )}
-      </div>
+        }
+        actions={
+          isOwner && (
+            <>
+              <Button size="sm" variant="secondary" onClick={() => setCatsOpen(true)}>Categories</Button>
+              <Button size="sm" onClick={() => setEditing('new')}>
+                <IconPlus size={16} /> Add item
+              </Button>
+            </>
+          )
+        }
+      />
 
-      <div className="relative mt-4">
+      {isOwner && missing.length > 0 && (
+        <Banner
+          tone="warning"
+          className="mb-4"
+          title={`${missing.length} ${missing.length === 1 ? 'item has' : 'items have'} no cost`}
+          action={
+            <Button size="sm" variant={missingOnly ? 'dark' : 'secondary'} aria-pressed={missingOnly} onClick={() => setMissingOnly((v) => !v)}>
+              {missingOnly ? 'Show all' : 'Show them'}
+            </Button>
+          }
+        >
+          Add what each item costs you to make, so Profit & loss can show your real margins.
+        </Banner>
+      )}
+
+      <div className="relative">
         <IconSearch className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-subtle" />
         <input type="search" aria-label="Search items" className="field-input pl-11" placeholder="Search items" value={query} onChange={(e) => setQuery(e.target.value)} />
       </div>
 
       {categories.map((c) => {
         const list = items.filter((i) => i.category_id === c.id)
-        if (list.length === 0 && q) return null
+        if (list.length === 0 && (q || missingOnly)) return null
         return (
           <section key={c.id} className="mt-6" aria-labelledby={`mc-${c.id}`}>
             <h2 id={`mc-${c.id}`} className="mb-2 text-sm font-extrabold tracking-wide text-ink-2 uppercase">{c.name}</h2>
             {list.length === 0 ? (
               <p className="rounded-2xl border border-dashed border-line-strong px-4 py-6 text-center text-sm text-muted">No items in this category.</p>
             ) : (
-              <ul className="divide-y divide-line overflow-hidden rounded-2xl bg-surface ring-1 ring-line">
+              <ul className="card divide-y divide-line overflow-hidden">
                 {list.map((item) => (
                   <li key={item.id} className="px-4 py-3">
                     <div className="flex items-center gap-3">
@@ -94,8 +128,10 @@ export function MenuManager() {
                         </p>
                         <p className="tabular text-sm text-muted">
                           {money(item.price)}
+                          {costs && <CostNote price={item.price} cost={costs.items[item.id]} />}
                           {item.addons.length > 0 && ` · ${item.addons.length} add-on${item.addons.length > 1 ? 's' : ''}`}
                           {item.is_popular && ' · Popular'}
+                          {stockOf(item.id) && ` · ${stockOf(item.id)!.on_hand} in stock`}
                         </p>
                       </div>
                       <div className="flex items-center gap-2">
@@ -142,7 +178,7 @@ export function MenuManager() {
           </section>
         )
       })}
-      {items.length === 0 && q && <EmptyState title={`No items match “${query.trim()}”`} />}
+      {items.length === 0 && (q || missingOnly) && <EmptyState title={q ? `No items match “${query.trim()}”` : 'Every item has a cost'} />}
 
       {isOwner && (
         <ItemEditor
@@ -150,16 +186,27 @@ export function MenuManager() {
           open={!!editing}
           item={editing === 'new' ? null : editing}
           categories={categories}
+          costs={costs}
           onClose={() => setEditing(null)}
           onSaved={async (msg) => {
-            await refresh()
+            await Promise.all([refresh(), loadCosts()])
             setEditing(null)
             toast(msg, 'success')
           }}
         />
       )}
       {isOwner && <CategoryManager open={catsOpen} onClose={() => setCatsOpen(false)} categories={categories} items={data.menu.items} onChanged={refresh} />}
-    </main>
+    </PageBody>
+  )
+}
+
+function CostNote({ price, cost }: { price: number; cost: number | undefined }) {
+  if (cost === undefined) return <span className="font-semibold text-[#8a4b00]"> · No cost set</span>
+  const margin = price - cost
+  return (
+    <span className={margin < 0 ? 'font-semibold text-danger' : ''}>
+      {' '}· cost {money(cost)} · {percent(price ? margin / price : null, 0)} margin
+    </span>
   )
 }
 
@@ -167,29 +214,40 @@ interface AddonDraft {
   id?: string
   name: string
   price: string
+  cost: string
   is_available: boolean
 }
 
 function ItemEditor({
-  open, item, categories, onClose, onSaved,
-}: { open: boolean; item: MenuItem | null; categories: Category[]; onClose: () => void; onSaved: (msg: string) => Promise<void> }) {
+  open, item, categories, costs, onClose, onSaved,
+}: { open: boolean; item: MenuItem | null; categories: Category[]; costs: Costs | null; onClose: () => void; onSaved: (msg: string) => Promise<void> }) {
   const toast = useToast()
   const [name, setName] = useState(item?.name ?? '')
   const [categoryId, setCategoryId] = useState(item?.category_id ?? categories[0]?.id ?? '')
   const [price, setPrice] = useState(item ? String(item.price) : '')
+  const initialCost = item && costs ? costs.items[item.id] : undefined
+  const [cost, setCost] = useState(initialCost === undefined ? '' : String(initialCost))
   const [description, setDescription] = useState(item?.description ?? '')
   const [isVeg, setIsVeg] = useState(item?.is_veg ?? true)
   const [available, setAvailable] = useState(item?.is_available ?? true)
   const [popular, setPopular] = useState(item?.is_popular ?? false)
   const [imagePath, setImagePath] = useState<string | null>(item?.image_path ?? null)
-  const [addons, setAddons] = useState<AddonDraft[]>(item?.addons.map((a) => ({ id: a.id, name: a.name, price: String(a.price), is_available: a.is_available })) ?? [])
+  const [addons, setAddons] = useState<AddonDraft[]>(
+    item?.addons.map((a) => ({
+      id: a.id, name: a.name, price: String(a.price), is_available: a.is_available,
+      cost: costs?.addons[a.id] === undefined ? '' : String(costs.addons[a.id]),
+    })) ?? [],
+  )
+  const showCosts = costs !== null
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const uploaded = useRef<string[]>([])
-  const ids = { name: useId(), cat: useId(), price: useId(), desc: useId() }
+  const ids = { name: useId(), cat: useId(), price: useId(), desc: useId(), cost: useId() }
+  const priceN = Number(price)
+  const costN = cost.trim() === '' ? null : Number(cost)
 
   const closeAndCleanup = () => {
     // Drop photos uploaded in this session but never saved.
@@ -223,6 +281,7 @@ function ItemEditor({
     if (!/^\d+$/.test(price.trim()) || p < 1 || p > 5000) e.price = 'Enter a whole-rupee price between 1 and 5000.'
     if (!categoryId) e.category = 'Choose a category.'
     if (description.length > 200) e.description = 'Keep the description under 200 characters.'
+    if (cost.trim() !== '' && (!/^\d+$/.test(cost.trim()) || Number(cost) > 5000)) e.cost = 'Enter a whole-rupee cost up to 5000, or leave it empty.'
     const seen = new Set<string>()
     addons.forEach((a, i) => {
       const n = cleanText(a.name)
@@ -231,6 +290,7 @@ function ItemEditor({
       else if (seen.has(n.toLowerCase())) e[`addon-${i}`] = 'Two add-ons have the same name.'
       seen.add(n.toLowerCase())
       if (!/^\d+$/.test(a.price.trim()) || Number(a.price) > 1000) e[`addon-${i}`] = e[`addon-${i}`] ?? 'Add-on price must be 0–1000.'
+      if (a.cost.trim() !== '' && (!/^\d+$/.test(a.cost.trim()) || Number(a.cost) > 1000)) e[`addon-${i}`] = e[`addon-${i}`] ?? 'Add-on cost must be 0–1000, or empty.'
     })
     setErrors(e)
     if (Object.keys(e).length) return null
@@ -244,7 +304,11 @@ function ItemEditor({
       is_available: available,
       is_popular: popular,
       image_path: imagePath,
-      addons: addons.map((a) => ({ id: a.id, name: cleanText(a.name), price: Number(a.price), is_available: a.is_available })),
+      ...(showCosts ? { cost: cost.trim() === '' ? null : Number(cost) } : {}),
+      addons: addons.map((a) => ({
+        id: a.id, name: cleanText(a.name), price: Number(a.price), is_available: a.is_available,
+        ...(showCosts ? { cost: a.cost.trim() === '' ? null : Number(a.cost) } : {}),
+      })),
     }
   }
 
@@ -350,6 +414,27 @@ function ItemEditor({
               {errors.price && <p className="mt-1 text-sm font-semibold text-danger">{errors.price}</p>}
             </div>
           </div>
+          {showCosts && (
+            <div className="rounded-xl border border-line bg-sunken p-3">
+              <div className="grid items-end gap-3 sm:grid-cols-2">
+                <div>
+                  <label htmlFor={ids.cost} className="label">Cost to make (₹) <span className="font-normal text-muted">· only you see this</span></label>
+                  <input id={ids.cost} className="field-input tabular" inputMode="numeric" placeholder="e.g. 12" value={cost} aria-invalid={!!errors.cost} onChange={(e) => setCost(e.target.value.replace(/\D/g, '').slice(0, 4))} />
+                </div>
+                <p className="pb-3 text-sm" aria-live="polite">
+                  {costN === null || !priceN ? (
+                    <span className="text-muted">Ingredients + packaging for one. Leave empty if you don’t know yet.</span>
+                  ) : (
+                    <span className={priceN - costN < 0 ? 'font-semibold text-danger' : ''}>
+                      Profit per sale <span className="tabular font-bold">{money(priceN - costN)}</span> · margin <span className="tabular font-bold">{percent((priceN - costN) / priceN, 0)}</span>
+                      {priceN - costN < 0 && ' — this item loses money'}
+                    </span>
+                  )}
+                </p>
+              </div>
+              {errors.cost && <p className="mt-1 text-sm font-semibold text-danger">{errors.cost}</p>}
+            </div>
+          )}
           <div>
             <label htmlFor={ids.desc} className="label">Description <span className="font-normal text-muted">(optional)</span></label>
             <textarea id={ids.desc} className="field-input min-h-20 resize-none" maxLength={200} value={description} onChange={(e) => setDescription(e.target.value)} />
@@ -385,6 +470,17 @@ function ItemEditor({
                         onChange={(e) => setAddons((list) => list.map((x, j) => (j === i ? { ...x, price: e.target.value.replace(/\D/g, '').slice(0, 4) } : x)))}
                       />
                     </div>
+                    {showCosts && (
+                      <input
+                        aria-label={`Add-on ${i + 1} cost`}
+                        title="Cost to you (optional)"
+                        className="field-input tabular w-20"
+                        inputMode="numeric"
+                        placeholder="cost"
+                        value={a.cost}
+                        onChange={(e) => setAddons((list) => list.map((x, j) => (j === i ? { ...x, cost: e.target.value.replace(/\D/g, '').slice(0, 4) } : x)))}
+                      />
+                    )}
                     <Button variant="ghost" size="sm" aria-label={`Remove add-on ${a.name || i + 1}`} onClick={() => setAddons((list) => list.filter((_, j) => j !== i))}>
                       <IconTrash size={16} />
                     </Button>
@@ -393,7 +489,7 @@ function ItemEditor({
                 </div>
               ))}
               {addons.length < 12 && (
-                <Button variant="secondary" size="sm" onClick={() => setAddons((list) => [...list, { name: '', price: '0', is_available: true }])}>
+                <Button variant="secondary" size="sm" onClick={() => setAddons((list) => [...list, { name: '', price: '0', cost: '', is_available: true }])}>
                   <IconPlus size={16} /> Add-on
                 </Button>
               )}

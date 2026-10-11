@@ -1,6 +1,7 @@
 import type {
-  CafeSettings, CafeTable, Category, CustomerOrder, Menu, OrderStatus, PlaceOrderInput, SalesSummary,
-  StaffMember, StaffOrder, StaffProfile, StaffRole,
+  AuditEntry, AuditQuery, CafeSettings, CafeTable, Category, Costs, CustomerOrder, Expense, ExpenseInput, Menu,
+  NewStaffInput, OrderStatus, PlaceOrderInput, ProfitAndLossData, SalesSummary, StaffMember, StaffOrder, StaffProfile,
+  StaffRole, StockAdjustKind, StockLevel, StockMovement,
 } from '../lib/types'
 
 export type LiveStatus = 'connecting' | 'live' | 'offline'
@@ -9,6 +10,8 @@ export interface PublicData {
   settings: CafeSettings
   menu: Menu
   tables: CafeTable[]
+  /** Stock-tracked items only. */
+  stock: StockLevel[]
 }
 
 export interface MenuItemInput {
@@ -21,7 +24,9 @@ export interface MenuItemInput {
   is_available: boolean
   is_popular: boolean
   image_path: string | null
-  addons: { id?: string; name: string; price: number; is_available: boolean }[]
+  /** Owner-only cost to make one. undefined = leave unchanged, null = not set. */
+  cost?: number | null
+  addons: { id?: string; name: string; price: number; is_available: boolean; cost?: number | null }[]
 }
 
 export interface StatusChange {
@@ -79,5 +84,26 @@ export interface Backend {
   deleteTable(label: string): Promise<void>
   listStaff(): Promise<StaffMember[]>
   updateStaff(userId: string, patch: Partial<{ role: StaffRole; is_active: boolean; display_name: string }>): Promise<void>
+  createStaff(input: NewStaffInput): Promise<{ user_id: string; email: string }>
+  resetStaffPassword(userId: string, password: string): Promise<void>
   salesSummary(fromDay: string, toDay: string): Promise<SalesSummary>
+
+  // Costs & profit (owner)
+  getCosts(): Promise<Costs>
+  profitAndLoss(fromDay: string, toDay: string): Promise<ProfitAndLossData>
+  listExpenses(fromDay: string, toDay: string): Promise<Expense[]>
+  addExpense(input: ExpenseInput): Promise<Expense>
+  updateExpense(id: string, input: ExpenseInput): Promise<Expense>
+  deleteExpense(id: string): Promise<void>
+
+  // Inventory
+  getStock(): Promise<StockLevel[]>
+  /** Owner: start or stop tracking an item, or change its low-stock level. */
+  configureStock(menuItemId: string, track: boolean, lowAt: number | null, onHand: number | null): Promise<void>
+  /** Any staff: received stock, waste, a recount or a correction. */
+  adjustStock(menuItemId: string, kind: StockAdjustKind, quantity: number, note: string | null): Promise<StockLevel>
+  listStockMovements(menuItemId: string | null, limit?: number): Promise<StockMovement[]>
+
+  // Audit (owner)
+  listAudit(query: AuditQuery): Promise<AuditEntry[]>
 }

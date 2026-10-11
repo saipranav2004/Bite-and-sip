@@ -3,7 +3,7 @@
 _Last updated: 11 Oct 2026 (IST)._
 
 ## Current phase
-**MVP built and verified locally. Waiting on external accounts (Supabase project + Vercel) for the live deployment.**
+**Live on Vercel + Supabase. Iteration 3 adds the owner's business tools and a redesigned staff console.**
 
 ## Completed
 - Research (reference projects, Supabase/UPI primary docs, yellow-and-black UI/UX research with contrast measurements).
@@ -23,30 +23,31 @@ _Last updated: 11 Oct 2026 (IST)._
   - dev-only sample-history seed
   - scripted walkthrough video
 
+- **Iteration 3:**
+  - item and add-on costs (owner-only), snapshotted per order line so later changes never rewrite past profit
+  - inventory for batch items: automatic deduction, return on cancel, sold out at zero, received / waste / recount / correction, history, low-stock badge
+  - expenses by category; profit & loss (gross, net, margins, prime cost, previous period, per-item profit, CSV) with one food-cost method at a time so ingredients are never counted twice
+  - append-only audit log written by database triggers (prices, costs, stock, payments, cancellations, staff, settings, expenses)
+  - Team page: create logins by username, reset passwords, remove access (Edge Function `staff-admin`, owner-checked)
+  - staff console redesign: sidebar / icon rail / bottom tabs, page headers, period picker, KPI cards with deltas, data tables, drawers
+  - kept the kitchen role: helpers never see profit, prices or the UPI ID, and the audit log names who did what; an owner can still run everything alone
+
 ## Key decisions
 Counter pickup only · statuses `placed→preparing→ready→completed` + `cancelled` · payment `unpaid/paid` kept separate, with UPI "customer says paid" shown as a claim only · completion requires paid · paid→unpaid owner-only · device-generated 256-bit order secret (hash stored) for anonymous access · prices computed only in SQL · max 3 open orders per phone · IST business day · black = identity, yellow = action.
 
 ## Tests executed (all passing)
 | Suite | Result |
 |---|---|
-| Lint | 0 errors (11 style warnings) |
+| Lint | 0 errors (style warnings only) |
 | Typecheck, build | pass |
-| Unit + component | 29/29 |
-| DB/security on local Supabase | 47/47 (also from a cold reset) |
-| E2E demo (phone + desktop) | 20/20 |
-| E2E local Supabase (phone + desktop) | 20/20 |
+| Unit + component | 36/36 |
+| DB/security/business rules on local Supabase (incl. Edge Function) | 78/78 |
+| E2E demo (phone + desktop) | 26/26 |
+| E2E local Supabase (phone + desktop) | 26/26 |
 
-## Outstanding / external dependencies
-1. **Live deployment not done.** This cloud environment's network policy blocks `api.vercel.com` (proxy 403), and no Vercel or Supabase credentials are available here. Either:
-   - **(recommended)** Import `saipranav2004/Bite-and-sip` in the Vercel dashboard (default root directory), or
-   - allow `api.vercel.com` (and `api.supabase.com`) in this environment's network settings and provide tokens, and the deploy can be scripted.
-2. **Supabase project:** create it, `npx supabase db push`, turn off sign-ups, create the owner/kitchen accounts (see README → Deploy).
-3. **Real UPI ID** in Settings, then test with ₹1 on a real phone.
-4. Print the table QR codes from the final domain.
-5. Manual checks not automatable here: iOS Safari, real UPI apps, paper printing.
-
-## Next concrete actions
-1. Push branch, then import it in Vercel. Until the Supabase keys are added, the site runs in demo mode.
-2. Create the Supabase project, apply migrations, add the env vars in Vercel, redeploy.
-3. Run through the go-live checklist in the README.
-4. Phase 2 candidates (only if needed): expenses + daily closing, refund tracking, CAPTCHA on ordering, phone-number retention job.
+## Outstanding
+1. Set a real UPI ID in Settings and test with ₹1 on a real phone.
+2. Change the simple starter passwords; print the table QR codes from the live domain.
+3. Enter item costs (Menu) and start logging expenses so Profit & loss reflects reality.
+4. Manual checks not automatable here: iOS Safari, real UPI apps, paper printing.
+5. Possible later: daily cash-closing report, refund tracking, CAPTCHA on ordering, phone-number retention job.

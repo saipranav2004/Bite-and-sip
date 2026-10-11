@@ -193,7 +193,7 @@ export function Switch({
 
 // ---- Dialog / bottom sheet ------------------------------------------------------
 export function Dialog({
-  open, onClose, title, children, footer, size = 'md', sheet = true, labelledBy,
+  open, onClose, title, children, footer, size = 'md', sheet = true, drawer = false, labelledBy, description,
 }: {
   open: boolean
   onClose: () => void
@@ -203,7 +203,10 @@ export function Dialog({
   size?: 'sm' | 'md' | 'lg'
   /** Bottom sheet on phones, centred dialog on larger screens. */
   sheet?: boolean
+  /** Side panel on the right (full screen on phones): keeps the page in view while editing. */
+  drawer?: boolean
   labelledBy?: string
+  description?: ReactNode
 }) {
   const ref = useRef<HTMLDialogElement>(null)
   const titleId = useId()
@@ -237,16 +240,18 @@ export function Dialog({
     return () => d.removeEventListener('cancel', cancel)
   }, [])
 
-  const width = { sm: 'sm:max-w-sm', md: 'sm:max-w-lg', lg: 'sm:max-w-2xl' }[size]
-  const position = sheet
-    ? 'mt-auto mb-0 w-full max-w-none rounded-t-3xl sm:m-auto sm:rounded-3xl'
-    : 'm-auto w-[calc(100%-2rem)] rounded-3xl'
+  const width = drawer ? '' : { sm: 'sm:max-w-sm', md: 'sm:max-w-lg', lg: 'sm:max-w-2xl' }[size]
+  const position = drawer
+    ? 'mr-0 ml-auto h-dvh max-h-dvh w-full max-w-none rounded-none sm:my-0 sm:max-w-[480px] sm:rounded-l-2xl'
+    : sheet
+      ? 'mt-auto mb-0 w-full max-w-none rounded-t-3xl sm:m-auto sm:rounded-3xl'
+      : 'm-auto w-[calc(100%-2rem)] rounded-3xl'
 
   return (
     <dialog
       ref={ref}
       aria-labelledby={labelledBy ?? (title ? titleId : undefined)}
-      className={`${position} ${width} max-h-[92dvh] overflow-hidden bg-surface p-0 text-ink shadow-[var(--shadow-float)] backdrop:bg-ink/50 open:flex open:flex-col open:animate-slide-up`}
+      className={`${position} ${width} ${drawer ? '' : 'max-h-[92dvh]'} overflow-hidden bg-surface p-0 text-ink shadow-[var(--shadow-float)] backdrop:bg-ink/50 open:flex open:flex-col open:animate-slide-up`}
       onClick={(e) => {
         if (e.target === ref.current) onClose()
       }}
@@ -255,7 +260,10 @@ export function Dialog({
         <>
           {title && (
             <div className="flex items-start justify-between gap-3 border-b border-line px-5 py-4">
-              <h2 id={titleId} className="text-lg font-extrabold">{title}</h2>
+              <div className="min-w-0">
+                <h2 id={titleId} className="text-lg font-extrabold">{title}</h2>
+                {description && <p className="mt-0.5 text-sm text-muted">{description}</p>}
+              </div>
               <button type="button" onClick={onClose} className="-m-2 grid size-10 shrink-0 place-items-center rounded-full hover:bg-sunken" aria-label="Close">
                 <IconX />
               </button>

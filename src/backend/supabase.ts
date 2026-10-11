@@ -3,8 +3,8 @@ import { AppError, toAppError } from '../lib/errors'
 import { bundledImage, isBundledImage } from '../lib/images'
 import { cafeDayStartIso, addDays } from '../lib/format'
 import type {
-  CafeSettings, CafeTable, Category, CustomerOrder, MenuItem, PlaceOrderInput, SalesSummary,
-  StaffMember, StaffOrder, StaffProfile,
+  AuditEntry, CafeSettings, CafeTable, Category, Costs, CustomerOrder, Expense, MenuItem, PlaceOrderInput,
+  ProfitAndLossData, SalesSummary, StaffMember, StaffOrder, StaffProfile, StockLevel, StockMovement,
 } from '../lib/types'
 import type { Backend, LiveStatus, MenuItemInput, PublicData, StatusChange } from './types'
 
@@ -15,6 +15,8 @@ const ORDER_COLUMNS =
   'items:order_items(name, base_price, addons, unit_price, quantity, line_total, note)'
 
 const IMAGE_BUCKET = 'menu-images'
+const EXPENSE_COLUMNS = 'id, spent_on, category, amount, note, created_at, updated_at'
+const STOCK_COLUMNS = 'menu_item_id, on_hand, low_at, updated_at'
 
 function unwrap<T>(res: { data: T; error: unknown }): T {
   if (res.error) throw toAppError(res.error)
@@ -44,21 +46,37 @@ export function createSupabaseBackend(url: string, key: string): Backend {
     return { ...data, email }
   }
 
+  /** Calls the staff-admin Edge Function and turns its error codes into AppErrors. */
+  async function staffAdmin(body: Record<string, unknown>): Promise<unknown> {
+    const { data, error } = await sb.functions.invoke('staff-admin', { body })
+    if (!error) return data
+    const ctx = (error as { context?: Response }).context
+    let code = ''
+    try {
+      code = ((await ctx?.json()) as { error?: string } | undefined)?.error ?? ''
+    } catch {
+      /* not JSON */
+    }
+    throw code ? new AppError(code) : toAppError(error)
+  }
+
   const backend: Backend = {
     mode: 'supabase',
 
     async getPublicData(): Promise<PublicData> {
-      const [settings, categories, items, tables] = await Promise.all([
+      const [settings, categories, items, tables, stock] = await Promise.all([
         sb.from('cafe_settings').select('cafe_name, is_open, closed_message, upi_id, upi_payee_name, updated_at').single(),
         sb.from('categories').select('id, name, sort_order').order('sort_order').order('name'),
         sb.from('menu_items').select('id, category_id, name, description, price, is_veg, is_available, is_popular, image_path, sort_order, addons(id, menu_item_id, name, price, is_available, sort_order)'),
         sb.from('cafe_tables').select('label, is_active').order('label'),
+        sb.from('stock_levels').select(STOCK_COLUMNS),
       ])
       const tableList = unwrap(tables) as CafeTable[]
       return {
         settings: unwrap(settings) as CafeSettings,
         menu: { categories: unwrap(categories) as Category[], items: sortMenu(unwrap(items) as MenuItem[]) },
         tables: tableList.sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true })),
+        stock: unwrap(stock) as StockLevel[],
       }
     },
 
@@ -279,8 +297,7 @@ export function createSupabaseBackend(url: string, key: string): Backend {
     },
 
     async listStaff() {
-      const res = await sb.from('staff').select('user_id, display_name, role, is_active, created_at').order('created_at')
-      return unwrap(res) as StaffMember[]
+      return unwrap(await sb.rpc('staff_directory')) as StaffMember[]
     },
 
     async updateStaff(userId, patch) {
@@ -288,8 +305,95 @@ export function createSupabaseBackend(url: string, key: string): Backend {
       if ((unwrap(res) ?? []).length === 0) throw new AppError('owner_only')
     },
 
+    async createStaff(input) {
+      return (await staffAdmin({ action: 'create', ...input })) as { user_id: string; email: string }
+    },
+
+    async resetStaffPassword(userId, password) {
+      await staffAdmin({ action: 'reset_password', user_id: userId, password })
+    },
+
     async salesSummary(fromDay, toDay) {
       return unwrap(await sb.rpc('sales_summary', { p_from: fromDay, p_to: toDay })) as SalesSummary
+    },
+
+    async getCosts() {
+      const [items, addons] = await Promise.all([
+        sb.from('menu_item_costs').select('menu_item_id, cost'),
+        sb.from('addon_costs').select('addon_id, cost'),
+      ])
+      const costs: Costs = { items: {}, addons: {} }
+      for (const r of unwrap(items) as { menu_item_id: string; cost: number }[]) costs.items[r.menu_item_id] = r.cost
+      for (const r of unwrap(addons) as { addon_id: string; cost: number }[]) costs.addons[r.addon_id] = r.cost
+      return costs
+    },
+
+    async profitAndLoss(fromDay, toDay) {
+      return unwrap(await sb.rpc('profit_and_loss', { p_from: fromDay, p_to: toDay })) as ProfitAndLossData
+    },
+
+    async listExpenses(fromDay, toDay) {
+      const res = await sb
+        .from('expenses')
+        .select(EXPENSE_COLUMNS)
+        .gte('spent_on', fromDay)
+        .lte('spent_on', toDay)
+        .order('spent_on', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(1000)
+      return unwrap(res) as Expense[]
+    },
+
+    async addExpense(input) {
+      return unwrap(await sb.from('expenses').insert(input).select(EXPENSE_COLUMNS).single()) as Expense
+    },
+
+    async updateExpense(id, input) {
+      const row = unwrap(await sb.from('expenses').update(input).eq('id', id).select(EXPENSE_COLUMNS).maybeSingle()) as Expense | null
+      if (!row) throw new AppError('owner_only')
+      return row
+    },
+
+    async deleteExpense(id) {
+      const res = await sb.from('expenses').delete().eq('id', id).select('id')
+      if ((unwrap(res) ?? []).length === 0) throw new AppError('owner_only')
+    },
+
+    async getStock() {
+      return unwrap(await sb.from('stock_levels').select(STOCK_COLUMNS)) as StockLevel[]
+    },
+
+    async configureStock(menuItemId, track, lowAt, onHand) {
+      unwrap(await sb.rpc('stock_configure', { p_menu_item_id: menuItemId, p_track: track, p_low_at: lowAt, p_on_hand: onHand }))
+    },
+
+    async adjustStock(menuItemId, kind, quantity, note) {
+      const row = unwrap(
+        await sb.rpc('stock_adjust', { p_menu_item_id: menuItemId, p_kind: kind, p_quantity: quantity, p_note: note }),
+      ) as StockLevel & { tracked: boolean }
+      return { menu_item_id: row.menu_item_id, on_hand: row.on_hand, low_at: row.low_at, updated_at: row.updated_at }
+    },
+
+    async listStockMovements(menuItemId, limit = 200) {
+      let q = sb
+        .from('stock_movements')
+        .select('id, menu_item_id, item_name, kind, delta, on_hand_after, unit_cost, order_id, note, actor_name, created_at')
+        .order('id', { ascending: false })
+        .limit(limit)
+      if (menuItemId) q = q.eq('menu_item_id', menuItemId)
+      return unwrap(await q) as StockMovement[]
+    },
+
+    async listAudit({ fromDay, toDay, beforeId, limit = 100 }) {
+      let q = sb
+        .from('audit_log')
+        .select('id, at, actor, actor_name, action, entity, entity_id, label, changes')
+        .gte('at', cafeDayStartIso(fromDay))
+        .lt('at', cafeDayStartIso(addDays(toDay, 1)))
+        .order('id', { ascending: false })
+        .limit(limit)
+      if (beforeId) q = q.lt('id', beforeId)
+      return unwrap(await q) as AuditEntry[]
     },
   }
   return backend

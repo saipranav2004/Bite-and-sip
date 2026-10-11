@@ -1,16 +1,15 @@
-import { useEffect, useId, useState, type FormEvent } from 'react'
+import { useId, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { backend, isDemo } from '../../backend'
 import { resetDemoData } from '../../backend/demo'
+import { PageBody, PageHeader, Panel } from '../../components/admin'
 import { IconPrinter, IconQr, IconTrash } from '../../components/icons'
 import { QrImage } from '../../components/QrImage'
 import { Banner, Button, Dialog, Spinner, Switch, useToast } from '../../components/ui'
 import { friendlyError } from '../../lib/errors'
 import { isValidUpiId, buildUpiLink } from '../../lib/upi'
-import type { StaffMember } from '../../lib/types'
 import { cleanText, normalizeTableLabel } from '../../lib/validation'
 import { usePublicData } from '../../state/publicData'
-import { useStaffSession } from '../../state/staffSession'
 
 export function publicSiteUrl() {
   const configured = import.meta.env.VITE_PUBLIC_SITE_URL as string | undefined
@@ -22,24 +21,32 @@ export function SettingsPage() {
   const { data } = usePublicData()
   if (!data) return <div className="grid place-items-center py-24"><Spinner label="Loading settings" /></div>
   return (
-    <main className="mx-auto max-w-3xl space-y-5 px-3 pt-3 pb-12 sm:px-4">
-      <h1 className="text-xl font-extrabold">Settings</h1>
-      <CafeStatus />
-      <PaymentSettings />
-      <TablesSettings />
-      <StaffSettings />
-      {isDemo && <DemoReset />}
-    </main>
+    <PageBody>
+      <div className="mx-auto max-w-3xl">
+        <PageHeader title="Settings" subtitle="Café status, UPI payments and table QR codes." />
+        <div className="space-y-4">
+          <CafeStatus />
+          <PaymentSettings />
+          <TablesSettings />
+          <section className="card flex flex-wrap items-center justify-between gap-3 p-4 sm:p-5">
+            <div>
+              <h2 className="text-[15px] font-extrabold">Team & access</h2>
+              <p className="mt-0.5 text-[13px] text-muted">Add kitchen logins, reset passwords and remove access.</p>
+            </div>
+            <Link to="/staff/team" className="inline-flex min-h-9 items-center rounded-lg border border-field px-3 text-sm font-bold hover:bg-sunken">Open Team</Link>
+          </section>
+          {isDemo && <DemoReset />}
+        </div>
+      </div>
+    </PageBody>
   )
 }
 
 function Section({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
   return (
-    <section className="card p-4 sm:p-5">
-      <h2 className="text-lg font-extrabold">{title}</h2>
-      {description && <p className="mt-0.5 text-sm text-muted">{description}</p>}
-      <div className="mt-4">{children}</div>
-    </section>
+    <Panel title={title} description={description}>
+      {children}
+    </Panel>
   )
 }
 
@@ -266,81 +273,6 @@ function TablesSettings() {
         ))}
       </ul>
       {tables.length === 0 && <p className="mt-3 text-sm text-muted">No tables yet. Students can still order using the counter QR.</p>}
-    </Section>
-  )
-}
-
-function StaffSettings() {
-  const { profile } = useStaffSession()
-  const toast = useToast()
-  const [staff, setStaff] = useState<StaffMember[] | null>(null)
-  const [busy, setBusy] = useState<string | null>(null)
-
-  const load = async () => {
-    try {
-      setStaff(await backend.listStaff())
-    } catch (err) {
-      toast(friendlyError(err), 'error')
-    }
-  }
-  useEffect(() => {
-    void load()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  async function update(m: StaffMember, patch: Partial<Pick<StaffMember, 'role' | 'is_active'>>, msg: string) {
-    setBusy(m.user_id)
-    try {
-      await backend.updateStaff(m.user_id, patch)
-      await load()
-      toast(msg, 'success')
-    } catch (err) {
-      toast(friendlyError(err), 'error')
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  return (
-    <Section title="Staff" description="Kitchen staff can run the orders board and mark items sold out. Owners can also edit the menu, settings and reports.">
-      {!staff ? (
-        <Spinner label="Loading staff" />
-      ) : (
-        <ul className="divide-y divide-line rounded-2xl ring-1 ring-line">
-          {staff.map((m) => {
-            const self = m.user_id === profile?.user_id
-            return (
-              <li key={m.user_id} className="flex flex-wrap items-center gap-3 px-4 py-3">
-                <div className="min-w-0 flex-1">
-                  <p className="font-bold">
-                    {m.display_name} {self && <span className="text-sm font-semibold text-muted">(you)</span>}
-                  </p>
-                  <p className="text-sm text-muted capitalize">{m.role}{m.is_active ? '' : ' · deactivated'}</p>
-                </div>
-                <select
-                  aria-label={`Role for ${m.display_name}`}
-                  className="field-input w-auto py-2"
-                  value={m.role}
-                  disabled={self || busy === m.user_id}
-                  onChange={(e) => void update(m, { role: e.target.value as StaffMember['role'] }, 'Role updated')}
-                >
-                  <option value="kitchen">Kitchen</option>
-                  <option value="owner">Owner</option>
-                </select>
-                <Switch
-                  checked={m.is_active}
-                  label={`${m.display_name} can sign in`}
-                  disabled={self || busy === m.user_id}
-                  onChange={(v) => void update(m, { is_active: v }, v ? 'Access restored' : 'Access removed')}
-                />
-              </li>
-            )
-          })}
-        </ul>
-      )}
-      <p className="mt-3 text-sm text-muted">
-        To add a staff member, create their account with the <code className="rounded bg-sunken px-1">create-staff</code> script (see the setup guide). Public sign-up is disabled.
-      </p>
     </Section>
   )
 }

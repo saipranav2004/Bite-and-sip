@@ -3,13 +3,18 @@ import { BrowserRouter, HashRouter, MemoryRouter, Navigate, Route, Routes, useLo
 import { shouldShowIntro, Splash } from './components/Splash'
 import { ToastProvider } from './components/ui'
 import { NotFound } from './pages/NotFound'
+import { AuditLogPage } from './pages/staff/AuditLogPage'
+import { ExpensesPage } from './pages/staff/ExpensesPage'
+import { InventoryPage } from './pages/staff/InventoryPage'
 import { LoginPage } from './pages/staff/LoginPage'
 import { MenuManager } from './pages/staff/MenuManager'
 import { OrdersBoard } from './pages/staff/OrdersBoard'
 import { PrintQrPage } from './pages/staff/PrintQrPage'
+import { ProfitLossPage } from './pages/staff/ProfitLossPage'
 import { ReportsPage } from './pages/staff/ReportsPage'
 import { SettingsPage } from './pages/staff/SettingsPage'
 import { RequireStaff, StaffLayout } from './pages/staff/StaffLayout'
+import { TeamPage } from './pages/staff/TeamPage'
 import { CartPage } from './pages/student/CartPage'
 import { MenuPage } from './pages/student/MenuPage'
 import { MyOrdersPage } from './pages/student/MyOrdersPage'
@@ -33,7 +38,12 @@ export function AppRoutes() {
       <Route path="/staff" element={<RequireStaff><StaffLayout /></RequireStaff>}>
         <Route index element={<OrdersBoard />} />
         <Route path="menu" element={<MenuManager />} />
+        <Route path="inventory" element={<InventoryPage />} />
         <Route path="reports" element={<RequireStaff ownerOnly><ReportsPage /></RequireStaff>} />
+        <Route path="profit" element={<RequireStaff ownerOnly><ProfitLossPage /></RequireStaff>} />
+        <Route path="expenses" element={<RequireStaff ownerOnly><ExpensesPage /></RequireStaff>} />
+        <Route path="team" element={<RequireStaff ownerOnly><TeamPage /></RequireStaff>} />
+        <Route path="audit" element={<RequireStaff ownerOnly><AuditLogPage /></RequireStaff>} />
         <Route path="settings" element={<RequireStaff ownerOnly><SettingsPage /></RequireStaff>} />
         <Route path="*" element={<Navigate to="/staff" replace />} />
       </Route>

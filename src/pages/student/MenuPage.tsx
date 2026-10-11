@@ -11,11 +11,12 @@ import { lineKey, priceCart } from '../../lib/pricing'
 import type { MenuItem } from '../../lib/types'
 import { useCart } from '../../state/cart'
 import { currentTable } from '../../state/device'
-import { usePublicData } from '../../state/publicData'
+import { lowStockNote, stockLeft } from '../../lib/stock'
+import { useStudentData } from '../../state/publicData'
 import { ItemSheet } from './ItemSheet'
 
 export function MenuPage() {
-  const { data, loading, error, refresh } = usePublicData()
+  const { data, loading, error, refresh } = useStudentData()
   const cart = useCart()
   const toast = useToast()
   const navigate = useNavigate()
@@ -51,6 +52,13 @@ export function MenuPage() {
     if (units > prevUnits.current) setBump((b) => b + 1)
     prevUnits.current = units
   }, [units])
+
+  /** How many more of a tracked item fit, after what's already in the cart (null = no limit). */
+  const roomFor = (itemId: string) => {
+    const left = data ? stockLeft(itemId, data.stock) : null
+    if (left === null) return null
+    return Math.max(0, left - cart.lines.filter((l) => l.menu_item_id === itemId).reduce((n, l) => n + l.quantity, 0))
+  }
 
   const addPlain = (item: MenuItem, from?: Element | null) => {
     flyToCart(from ?? null)
@@ -184,6 +192,8 @@ export function MenuPage() {
                     categoryName={c.name}
                     disabled={!isOpen}
                     plainQty={cart.plainQuantity(item.id)}
+                    room={roomFor(item.id)}
+                    lowNote={data ? lowStockNote(item.id, data.stock) : null}
                     onOpen={() => setSelected(item)}
                     onAdd={(from) => (item.addons.length ? setSelected(item) : addPlain(item, from))}
                     onSetPlain={(n) => cart.setQuantity(lineKey(item.id, [], ''), n)}
@@ -202,6 +212,7 @@ export function MenuPage() {
         categoryName={selected ? catName(selected.category_id) : undefined}
         open={!!selected}
         disabled={!isOpen}
+        room={selected ? roomFor(selected.id) : null}
         onClose={() => setSelected(null)}
         onAdd={(addonIds, qty, note) => {
           if (!selected) return
@@ -237,8 +248,10 @@ export function MenuPage() {
 }
 
 function MenuRow({
-  item, categoryName, plainQty, disabled, delay, onOpen, onAdd, onSetPlain,
+  item, categoryName, plainQty, disabled, delay, onOpen, onAdd, onSetPlain, room, lowNote,
 }: {
+  room: number | null
+  lowNote: string | null
   item: MenuItem
   delay: number
   categoryName: string
@@ -263,16 +276,19 @@ function MenuRow({
           </span>
           <span className={`mt-1 block font-bold leading-snug ${item.is_available ? '' : 'text-muted'}`}>{item.name}</span>
           {item.description && <span className="mt-0.5 line-clamp-2 block text-sm text-muted">{item.description}</span>}
-          <span className="tabular mt-1 block font-bold">{money(item.price)}</span>
+          <span className="tabular mt-1 block font-bold">
+            {money(item.price)}
+            {lowNote && item.is_available && <span className="ml-2 text-xs font-bold text-brand-ink">{lowNote}</span>}
+          </span>
         </span>
       </button>
       <div className="flex shrink-0 flex-col items-end justify-center gap-1">
         {!item.is_available ? (
           <span className="rounded-full bg-sunken px-3 py-1.5 text-xs font-bold text-muted">Sold out</span>
         ) : plainQty > 0 && !customisable ? (
-          <QuantityStepper size="sm" value={plainQty} min={0} onChange={onSetPlain} label={item.name} />
+          <QuantityStepper size="sm" value={plainQty} min={0} max={room === null ? 20 : Math.min(20, plainQty + room)} onChange={onSetPlain} label={item.name} />
         ) : (
-          <Button size="sm" variant="secondary" disabled={disabled} onClick={() => onAdd(photo.current)} className="min-w-20 border-ink font-extrabold" aria-label={`Add ${item.name}`}>
+          <Button size="sm" variant="secondary" disabled={disabled || room === 0} onClick={() => onAdd(photo.current)} className="min-w-20 border-ink font-extrabold" aria-label={`Add ${item.name}`}>
             Add
           </Button>
         )}

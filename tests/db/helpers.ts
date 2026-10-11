@@ -16,7 +16,7 @@ export const PANEER_WRAP = ITEM['Paneer Wrap'] // seeded as unavailable
 export const addon = (item: (typeof catalog.items)[number], name: string) => item.addons.find((a) => a.name === name)!.id
 
 export async function staffClient(role: 'owner' | 'kitchen' | null, tag: string): Promise<SupabaseClient> {
-  const email = `${tag}-${randomUUID().slice(0, 8)}@test.bitesip`
+  const email = `${tag.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${randomUUID().slice(0, 8)}@test.bitesip`
   const password = randomBytes(12).toString('hex')
   const { data, error } = await admin.auth.admin.createUser({ email, password, email_confirm: true })
   if (error) throw error

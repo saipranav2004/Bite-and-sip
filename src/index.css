@@ -349,3 +349,80 @@
     transform: translate(calc(-50% + var(--x)), calc(-50% + var(--y))) rotate(var(--r)) scale(1);
   }
 }
+
+/* ---- Staff console --------------------------------------------------------
+   Enterprise look: neutral surfaces, 1px borders instead of shadows, compact
+   type, yellow only for the primary action, active nav and focus. */
+.admin {
+  --color-canvas: #f7f7f5;
+  --color-sunken: #f1f1ee;
+  --color-line: #e5e5e0;
+  --color-line-strong: #d3d3cc;
+  --color-field: #85857b;
+  --color-muted: #5c5c55;
+  --color-subtle: #66665e;
+  --radius-card: 0.625rem;
+  --shadow-card: none;
+  background: var(--color-canvas);
+}
+.admin :focus-visible {
+  outline: 2px solid var(--color-ink);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--color-brand);
+}
+
+@layer components {
+  .dt {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 14px;
+  }
+  .dt th {
+    background: var(--color-sunken);
+    text-align: left;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    color: var(--color-muted);
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--color-line);
+    white-space: nowrap;
+  }
+  .dt td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--color-line);
+    vertical-align: middle;
+  }
+  .dt tbody tr:last-child td {
+    border-bottom: 0;
+  }
+  .dt tbody tr:hover > td,
+  .dt tbody tr:hover > th {
+    background: #fafaf8 !important;
+  }
+  .dt .num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .dt tfoot td {
+    border-top: 1px solid var(--color-line-strong);
+    border-bottom: 0;
+    font-weight: 700;
+  }
+  .skeleton {
+    border-radius: 6px;
+    background: linear-gradient(90deg, var(--color-sunken) 0%, #e9e9e5 50%, var(--color-sunken) 100%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s ease-in-out infinite;
+  }
+}
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}

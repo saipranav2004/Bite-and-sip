@@ -15,7 +15,7 @@ import { useCart } from '../../state/cart'
 import {
   currentTable, pendingOrder, rememberOrder, savedDetails, saveDetails, setCurrentTable, setPendingOrder,
 } from '../../state/device'
-import { usePublicData } from '../../state/publicData'
+import { useStudentData } from '../../state/publicData'
 
 const ISSUE_TEXT: Record<LineIssue, string> = {
   item_missing: 'No longer on the menu',
@@ -24,7 +24,7 @@ const ISSUE_TEXT: Record<LineIssue, string> = {
 }
 
 export function CartPage() {
-  const { data, loading, refresh } = usePublicData()
+  const { data, loading, refresh } = useStudentData()
   const cart = useCart()
   const navigate = useNavigate()
   const saved = savedDetails()

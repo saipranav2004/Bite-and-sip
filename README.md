@@ -1,6 +1,6 @@
 # Bite & Sip — College Café Ordering
 
-Students scan a table QR, order from their phone, pay cash or UPI, and get told when to collect at the counter. Kitchen staff work a live orders board. The owner manages the menu, café status, UPI ID, table QR codes and daily reports.
+Students scan a table QR, order from their phone, pay cash or UPI, and get told when to collect at the counter. Kitchen staff work a live orders board. The owner runs the whole café from one console: menu and costs, stock, expenses, profit & loss, team logins, an audit log, UPI and table QR codes.
 
 **Stack:** React 19 · Vite · Tailwind CSS v4 · Supabase (Postgres, Auth, Realtime, Storage) · Vercel.
 
@@ -15,15 +15,21 @@ Students scan a table QR, order from their phone, pay cash or UPI, and get told 
   - UPI payment checks, cash collection at handover, cancellations with reasons
   - sold-out switches
 - **Owner:**
-  - menu editing (photos, prices, add-ons, categories)
-  - café open/closed, UPI ID with ₹1 test QR, tables and printable QR codes, staff access
-  - reports that reconcile cash, confirmed UPI and unpaid amounts; CSV export
+  - menu editing (photos, prices, add-ons, categories) with the cost to make each item and live margins
+  - **Inventory:** track batch items (samosas, sandwiches); orders reduce stock, cancellations return it, items sell out by themselves at zero; received / waste / recount / correction with history and low-stock alerts
+  - **Expenses:** log wages, rent, gas, ingredients… by category
+  - **Profit & loss:** sales − food cost = gross profit − running costs − waste = net profit, with margins, previous-period comparison, per-item profit and CSV export. Food cost comes from item costs *or* ingredient purchases — never both, so nothing is counted twice
+  - **Team:** add kitchen or owner logins with a simple username, reset passwords, remove access — no scripts needed
+  - **Audit log:** every change to prices, costs, stock, payments, staff and settings, who made it and when; append-only, CSV export
+  - sales reports that reconcile cash, confirmed UPI and unpaid amounts; café open/closed, UPI ID with ₹1 test QR, tables and printable QR codes
 - **Security:**
   - prices calculated in the database
   - Row Level Security on every table
   - per-order device secrets for anonymous tracking
   - order and payment state machine enforced by triggers
   - only staff can mark orders paid
+  - costs, expenses, profit and the audit log are owner-only (kitchen logins never see them)
+  - staff logins are created server-side by an Edge Function that checks the caller is an owner
 
 ## Try it in 30 seconds (no accounts)
 ```bash
@@ -49,19 +55,21 @@ npm run dev
 ## Deploy
 ### Supabase
 1. Create a project (Mumbai region recommended).
-2. Push the schema:
+2. Push the schema and the staff-accounts function:
    ```bash
    npx supabase login
    npx supabase link --project-ref <ref>
    npx supabase db push
+   npx supabase functions deploy staff-admin
    ```
 3. Optional: run `supabase/seed.sql` in the SQL editor for the starter menu. Then set your real UPI ID in Settings.
 4. Authentication: turn **off** "Allow new users to sign up" and set the Site URL to your Vercel URL.
-5. Create staff accounts from your computer. The secret key never goes into Vercel or git.
+5. Create the first owner account from your computer (the secret key never goes into Vercel or git). Add everyone else from **Team** in the app.
    ```bash
    SUPABASE_URL=https://<ref>.supabase.co SUPABASE_SECRET_KEY=<secret> \
-     node scripts/create-staff.mjs --email you@example.com --name "Your name" --role owner
+     node scripts/create-staff.mjs --email admin@bite.local --name "Owner" --role owner
    ```
+   Staff can sign in with just the username (`admin`), or with a full email address.
 
 ### Vercel
 1. **Add New → Project →** import `saipranav2004/Bite-and-sip` (default settings; `vercel.json` handles routing and security headers).
@@ -79,7 +87,7 @@ npm run dev
 |---|---|
 | `npm run dev` / `dev:demo` | Dev server (Supabase from `.env.local` / in-browser demo) |
 | `npm run check` | Lint, typecheck, unit + component tests, build |
-| `npm run test:db` | Database security tests against local Supabase |
+| `npm run test:db` | Database security and business-rule tests against local Supabase |
 | `npm run test:e2e` / `test:e2e:supabase` | Playwright journeys (demo / local Supabase) |
 | `npm run staff:create -- --email … --name … --role owner\|kitchen` | Create or update a staff account |
 | `npm run seed:generate` | Regenerate `supabase/seed.sql` from `src/data/catalog.json` |
@@ -92,10 +100,10 @@ src/
   components/   UI kit, icons, food art, QR, intro, celebrations
   data/         Menu catalog
   hooks/        Live order tracking (student) and live board (staff)
-  lib/          Pricing, order rules, UPI, validation, reports, images, motion
+  lib/          Pricing, order rules, stock, profit & loss, audit wording, UPI, validation, reports
   pages/        student/ and staff/ screens
   state/        Cart, device secrets, menu data, staff session
-supabase/       config, migrations (schema + security), seed
+supabase/       config, migrations (schema, security, business rules), staff-admin function, seed
 scripts/        staff accounts, seeds, walkthrough video tooling
 tests/          db/ (security, local Supabase) and e2e/ (Playwright)
 ```

@@ -52,10 +52,43 @@ export function ago(iso: string, now: number = Date.now()) {
   if (m < 1) return 'just now'
   if (m < 60) return `${m} min ago`
   const h = Math.floor(m / 60)
-  return `${h} h ${m % 60} min ago`
+  if (h < 24) return `${h} h ${m % 60} min ago`
+  const d = Math.floor(h / 24)
+  return d === 1 ? 'yesterday' : `${d} days ago`
 }
 
 export function hourLabel(hour: number) {
   const h = hour % 12 === 0 ? 12 : hour % 12
   return `${h}${hour < 12 ? 'am' : 'pm'}`
+}
+
+/** Money with a true minus sign for losses: −₹1,200. */
+export function signedMoney(rupees: number) {
+  if (rupees === 0) return inr.format(0)
+  return rupees < 0 ? `−${inr.format(-rupees)}` : inr.format(rupees)
+}
+
+const compact = new Intl.NumberFormat('en-IN', { notation: 'compact', maximumFractionDigits: 1 })
+
+/** Short form for KPI cards: ₹1.2L, ₹3.4Cr (full value below ₹1 lakh). */
+export function moneyCompact(rupees: number) {
+  const abs = Math.abs(rupees)
+  const body = abs >= 100000 ? `₹${compact.format(abs)}` : inr.format(abs)
+  return rupees < 0 ? `−${body}` : body
+}
+
+export function percent(fraction: number | null, digits = 1) {
+  if (fraction === null || !Number.isFinite(fraction)) return '—'
+  const v = (fraction * 100).toFixed(digits)
+  return `${fraction < 0 ? '−' : ''}${v.replace('-', '')}%`
+}
+
+/** "12 Oct, 3:45 pm" in café time. */
+export function dateTime(iso: string) {
+  return new Intl.DateTimeFormat('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', timeZone: TIME_ZONE }).format(new Date(iso))
+}
+
+/** First day of the month containing `day` (YYYY-MM-DD). */
+export function monthStart(day: string) {
+  return `${day.slice(0, 7)}-01`
 }

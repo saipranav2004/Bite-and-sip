@@ -133,6 +133,108 @@ export interface StaffMember {
   role: StaffRole
   is_active: boolean
   created_at: string
+  /** Sign-in address (username@bite.local for short usernames). */
+  email: string | null
+  last_sign_in_at: string | null
+}
+
+export interface NewStaffInput {
+  /** A username ("ravi") or a full email address. */
+  login: string
+  display_name: string
+  role: StaffRole
+  password: string
+}
+
+/** A stock-tracked menu item. Items without a row are not tracked. */
+export interface StockLevel {
+  menu_item_id: string
+  on_hand: number
+  low_at: number
+  updated_at: string
+}
+
+export type StockMovementKind = 'initial' | 'sale' | 'cancel_return' | 'restock' | 'waste' | 'count' | 'correction'
+export type StockAdjustKind = 'restock' | 'waste' | 'count' | 'correction'
+
+export interface StockMovement {
+  id: number
+  menu_item_id: string | null
+  item_name: string
+  kind: StockMovementKind
+  delta: number
+  on_hand_after: number
+  unit_cost: number | null
+  order_id: string | null
+  note: string | null
+  actor_name: string | null
+  created_at: string
+}
+
+/** Owner-only: what each item and add-on costs the café to make. */
+export interface Costs {
+  items: Record<string, number>
+  addons: Record<string, number>
+}
+
+export type ExpenseCategory =
+  | 'ingredients' | 'salaries' | 'rent' | 'utilities' | 'gas' | 'packaging' | 'maintenance' | 'marketing' | 'other'
+
+export interface Expense {
+  id: string
+  spent_on: string
+  category: ExpenseCategory
+  amount: number
+  note: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ExpenseInput {
+  spent_on: string
+  category: ExpenseCategory
+  amount: number
+  note: string | null
+}
+
+export interface ProfitAndLossData {
+  from: string
+  to: string
+  orders: number
+  sales: number
+  outstanding: number
+  refunds_due: number
+  food_cost: number
+  costed_sales: number
+  uncosted_sales: number
+  uncosted_items: number
+  waste_cost: number
+  waste_units: number
+  waste_uncosted_units: number
+  expenses: { category: ExpenseCategory; amount: number; entries: number }[]
+  items: { name: string; quantity: number; sales: number; cost: number | null }[]
+  by_day: { day: string; sales: number; food_cost: number; expenses: number }[]
+}
+
+export interface AuditEntry {
+  id: number
+  at: string
+  actor: string | null
+  actor_name: string
+  action: string
+  entity: string
+  entity_id: string | null
+  label: string | null
+  /** field → [before, after] */
+  changes: Record<string, [unknown, unknown]>
+}
+
+export interface AuditQuery {
+  fromDay: string
+  toDay: string
+  /** Load entries older than this id (paging). */
+  beforeId?: number
+  limit?: number
 }
 
 export interface SalesSummary {

@@ -1,24 +1,26 @@
 // Demo backend: runs entirely in this browser (localStorage + BroadcastChannel).
 // It powers the interactive mockups, UI tests and previews when no Supabase
 // project is configured. It mirrors the database rules (pricing, state machine,
-// permissions) but is NOT secure: nothing here should be used for real orders.
+// stock, permissions, audit log) but is NOT secure: nothing here should be used
+// for real orders.
 import catalog from '../data/catalog.json'
 import { AppError } from '../lib/errors'
 import { addDays, cafeDate, cafeDayStartIso } from '../lib/format'
 import { canTransition, OPEN_STATUSES } from '../lib/orderRules'
+import { computeProfitAndLoss } from '../lib/pnl'
 import { MAX_LINES, MAX_QTY_PER_LINE, MAX_UNITS } from '../lib/pricing'
 import { summarize } from '../lib/reports'
 import { readJson, writeJson } from '../lib/storage'
 import type {
-  CafeSettings, CafeTable, Category, CustomerOrder, MenuItem, OrderLine, PaymentMethod, PlaceOrderInput,
-  StaffMember, StaffOrder, StaffProfile, StaffRole,
+  AuditEntry, CafeSettings, CafeTable, Category, Costs, CustomerOrder, Expense, ExpenseInput, MenuItem, OrderLine,
+  PaymentMethod, PlaceOrderInput, StaffMember, StaffOrder, StaffProfile, StaffRole, StockLevel, StockMovement,
 } from '../lib/types'
-import { cleanText, normalizePhone, normalizeTableLabel } from '../lib/validation'
+import { cleanText, normalizePhone, normalizeTableLabel, toLoginEmail } from '../lib/validation'
 import { isValidUpiId } from '../lib/upi'
 import { bundledImage, isBundledImage } from '../lib/images'
 import type { Backend, LiveStatus, MenuItemInput, PublicData } from './types'
 
-const STORE_KEY = 'bitesip-demo-v2'
+const STORE_KEY = 'bitesip-demo-v3'
 const SESSION_KEY = 'bitesip-demo-session'
 
 export const DEMO_ACCOUNTS = [
@@ -26,21 +28,44 @@ export const DEMO_ACCOUNTS = [
   { email: 'kitchen@demo.bitesip', password: 'demo-kitchen', role: 'kitchen' as const, name: 'Ravi (Kitchen)', user_id: 'demo-kitchen' },
 ]
 
+/** Illustrative costs for the demo menu (₹ per unit). Chocolate Shake is left unset on purpose. */
+const DEMO_COSTS: Record<string, number> = {
+  'Masala Chai': 6, 'Filter Coffee': 8, 'Cold Coffee': 16, 'Fresh Lime Soda': 7, 'Crispy Samosa': 6,
+  'Veg Sandwich': 17, 'Paneer Wrap': 28, 'Bread Omelette': 14, 'College Special Maggi': 17, 'Veg Fried Rice': 30,
+  'Egg Fried Rice': 34, 'Maggi + Chai Combo': 23, 'Samosa + Chai Combo': 12,
+}
+const DEMO_ADDON_COSTS: Record<string, number> = { 'Extra Cheese': 7, 'Cheese slice': 6, 'Extra Paneer': 12, 'Ice cream scoop': 9 }
+
 interface DemoOrder extends StaffOrder {
   token: string
   track_key: string
   client_request_id: string
+  /** Cost per unit for each line at the moment of sale (null = no cost set). */
+  line_costs: (number | null)[]
+}
+
+interface DemoAccount {
+  email: string
+  password: string
+  user_id: string
 }
 
 interface Store {
-  version: 1
+  version: 3
   settings: CafeSettings
   categories: Category[]
   items: MenuItem[]
   tables: CafeTable[]
   orders: DemoOrder[]
   staff: StaffMember[]
+  accounts: DemoAccount[]
   nextOrderNo: number
+  costs: Costs
+  stock: StockLevel[]
+  movements: StockMovement[]
+  expenses: Expense[]
+  audit: AuditEntry[]
+  nextId: number
 }
 
 const delay = (ms = 120) => new Promise((r) => setTimeout(r, ms))
@@ -67,6 +92,15 @@ function seedMenu(): { categories: Category[]; items: MenuItem[] } {
   }
 }
 
+function seedCosts(items: MenuItem[]): Costs {
+  const costs: Costs = { items: {}, addons: {} }
+  for (const i of items) {
+    if (DEMO_COSTS[i.name] !== undefined) costs.items[i.id] = DEMO_COSTS[i.name]
+    for (const a of i.addons) if (DEMO_ADDON_COSTS[a.name] !== undefined) costs.addons[a.id] = DEMO_ADDON_COSTS[a.name]
+  }
+  return costs
+}
+
 /** Deterministic pseudo-random sequence so the sample history is stable. */
 function prng(seed: number) {
   return () => {
@@ -83,8 +117,14 @@ function buildLine(item: MenuItem, qty: number, addonIds: string[], note: string
   return { name: item.name, base_price: item.price, addons, unit_price: unit, quantity: qty, line_total: unit * qty, note }
 }
 
+function lineCost(costs: Costs, item: MenuItem, addonIds: string[]): number | null {
+  const base = costs.items[item.id]
+  if (base === undefined) return null
+  return base + addonIds.reduce((s, id) => s + (costs.addons[id] ?? 0), 0)
+}
+
 /** Sample history: the previous 13 days of completed orders plus a few live ones today. */
-function seedOrders(items: MenuItem[]): { orders: DemoOrder[]; next: number } {
+function seedOrders(items: MenuItem[], costs: Costs): { orders: DemoOrder[]; next: number } {
   const rand = prng(20261010)
   const available = items.filter((i) => i.is_available)
   const orders: DemoOrder[] = []
@@ -95,6 +135,7 @@ function seedOrders(items: MenuItem[]): { orders: DemoOrder[]; next: number } {
   const make = (createdAt: Date, status: StaffOrder['status'], method: PaymentMethod, paid: boolean): DemoOrder => {
     const lineCount = 1 + Math.floor(rand() * 3)
     const lines: OrderLine[] = []
+    const lineCosts: (number | null)[] = []
     const used = new Set<string>()
     for (let k = 0; k < lineCount; k++) {
       const item = available[Math.floor(rand() * available.length)]
@@ -102,6 +143,7 @@ function seedOrders(items: MenuItem[]): { orders: DemoOrder[]; next: number } {
       used.add(item.id)
       const addonIds = item.addons.length && rand() < 0.4 ? [item.addons[0].id] : []
       lines.push(buildLine(item, 1 + Math.floor(rand() * 2), addonIds, null))
+      lineCosts.push(lineCost(costs, item, addonIds))
     }
     const total = lines.reduce((s, l) => s + l.line_total, 0)
     const created = createdAt.toISOString()
@@ -132,6 +174,7 @@ function seedOrders(items: MenuItem[]): { orders: DemoOrder[]; next: number } {
       cancelled_at: status === 'cancelled' ? step(3) : null,
       paid_at: paid ? step(14) : null,
       items: lines,
+      line_costs: lineCosts,
       token: uuid().replaceAll('-', '') + uuid().replaceAll('-', ''),
       track_key: uuid(),
       client_request_id: uuid(),
@@ -172,24 +215,91 @@ function seedOrders(items: MenuItem[]): { orders: DemoOrder[]; next: number } {
   return { orders, next: no }
 }
 
+/** Sample stock, expenses and audit history so every owner screen has something to show. */
+function seedBusiness(items: MenuItem[], costs: Costs) {
+  const rand = prng(1010)
+  const today = cafeDate()
+  const at = (day: string, hour: number) => new Date(new Date(cafeDayStartIso(day)).getTime() + hour * 3600000).toISOString()
+  const byName = (n: string) => items.find((i) => i.name === n)!
+  let id = 1
+  const samosa = byName('Crispy Samosa')
+  const sandwich = byName('Veg Sandwich')
+  const stock: StockLevel[] = [
+    { menu_item_id: samosa.id, on_hand: 24, low_at: 10, updated_at: at(today, 8) },
+    { menu_item_id: sandwich.id, on_hand: 4, low_at: 5, updated_at: at(today, 8.5) },
+  ]
+  const movements: StockMovement[] = []
+  const move = (item: MenuItem, kind: StockMovement['kind'], delta: number, after: number, created: string, actor: string, note: string | null = null) =>
+    movements.push({
+      id: id++, menu_item_id: item.id, item_name: item.name, kind, delta, on_hand_after: after,
+      unit_cost: kind === 'waste' ? costs.items[item.id] ?? null : null, order_id: null, note, actor_name: actor, created_at: created,
+    })
+  move(samosa, 'initial', 30, 30, at(addDays(today, -6), 8), 'Asha (Owner)')
+  move(sandwich, 'initial', 12, 12, at(addDays(today, -6), 8), 'Asha (Owner)')
+  for (let d = 5; d >= 0; d--) {
+    const day = addDays(today, -d)
+    move(samosa, 'restock', 40, 40 + Math.floor(rand() * 6), at(day, 8), 'Ravi (Kitchen)', 'Morning batch')
+    if (d % 2 === 1) move(samosa, 'waste', -3, 2, at(day, 18), 'Ravi (Kitchen)', 'Unsold at closing')
+    move(sandwich, 'restock', 12, 12, at(day, 8.5), 'Ravi (Kitchen)', 'Bread delivery')
+  }
+  move(sandwich, 'count', -1, 4, at(today, 11), 'Ravi (Kitchen)', 'Recount at lunch')
+
+  const expenses: Expense[] = []
+  const spend = (day: string, category: Expense['category'], amount: number, note: string | null) =>
+    expenses.push({ id: uuid(), spent_on: day, category, amount, note, created_at: at(day, 19), updated_at: at(day, 19) })
+  for (let d = 13; d >= 0; d--) {
+    const day = addDays(today, -d)
+    spend(day, 'ingredients', 650 + Math.round(rand() * 5) * 50, 'Milk, vegetables, bread')
+    if (d % 6 === 1) spend(day, 'gas', 1050, 'LPG cylinder')
+    if (d % 4 === 2) spend(day, 'packaging', 150 + Math.round(rand() * 3) * 50, 'Cups and plates')
+    if (d % 7 === 0) spend(day, 'salaries', 2100, 'Weekly wages · 1 helper')
+  }
+  spend(addDays(today, -10), 'rent', 2500, 'Counter rent (half month)')
+  spend(addDays(today, -9), 'utilities', 900, 'Electricity')
+  spend(addDays(today, -4), 'maintenance', 350, 'Mixer repair')
+
+  const audit: AuditEntry[] = []
+  const log = (day: string, hour: number, actor: string, action: string, entity: string, label: string, changes: AuditEntry['changes'], entityId: string | null = null) =>
+    audit.push({ id: id++, at: at(day, hour), actor: null, actor_name: actor, action, entity, entity_id: entityId, label, changes })
+  const coldCoffee = byName('Cold Coffee')
+  log(addDays(today, -6), 8, 'Asha (Owner)', 'stock.tracking_on', 'stock', samosa.name, { on_hand: [null, 30], low_at: [null, 10] }, samosa.id)
+  log(addDays(today, -5), 10.5, 'Asha (Owner)', 'menu_item.updated', 'menu_item', coldCoffee.name, { price: [35, coldCoffee.price] }, coldCoffee.id)
+  log(addDays(today, -5), 10.6, 'Asha (Owner)', 'cost.changed', 'cost', coldCoffee.name, { cost: [14, 16] }, coldCoffee.id)
+  log(addDays(today, -3), 13, 'Ravi (Kitchen)', 'menu_item.updated', 'menu_item', 'Paneer Wrap', { is_available: [true, false] }, byName('Paneer Wrap').id)
+  log(addDays(today, -2), 9, 'Asha (Owner)', 'settings.updated', 'settings', 'Café settings', { upi_id: [null, catalog.settings.upi_id] }, 'true')
+  log(addDays(today, -1), 12.2, 'Ravi (Kitchen)', 'order.cancelled', 'order', 'Order BS-1290 · ₹55 CASH', { status: ['preparing', 'cancelled'], cancel_reason: [null, 'Item ran out'] })
+  log(today, 9.1, 'Ravi (Kitchen)', 'order.marked_paid', 'order', 'Order BS-1371 · ₹70 UPI', { payment_status: ['unpaid', 'paid'], payment_reference: [null, 'UTR 4521'] })
+  audit.sort((a, b) => a.at.localeCompare(b.at))
+  audit.forEach((a, i) => (a.id = i + 1))
+  return { stock, movements, expenses, audit, nextId: Math.max(audit.length, ...movements.map((m) => m.id)) + 1 }
+}
+
 function freshStore(): Store {
   const menu = seedMenu()
-  const { orders, next } = seedOrders(menu.items)
+  const costs = seedCosts(menu.items)
+  const { orders, next } = seedOrders(menu.items, costs)
+  const business = seedBusiness(menu.items, costs)
+  const created = new Date(Date.now() - 30 * 86400000).toISOString()
   return {
-    version: 1,
+    version: 3,
     settings: { ...catalog.settings, updated_at: now() },
     categories: menu.categories,
     items: menu.items,
     tables: catalog.tables.map((label) => ({ label, is_active: true })),
     orders,
-    staff: DEMO_ACCOUNTS.map((a) => ({ user_id: a.user_id, display_name: a.name, role: a.role, is_active: true, created_at: now() })),
+    staff: DEMO_ACCOUNTS.map((a) => ({
+      user_id: a.user_id, display_name: a.name, role: a.role, is_active: true, created_at: created, email: a.email, last_sign_in_at: null,
+    })),
+    accounts: DEMO_ACCOUNTS.map(({ email, password, user_id }) => ({ email, password, user_id })),
     nextOrderNo: next,
+    costs,
+    ...business,
   }
 }
 
 function load(): Store {
   const s = readJson<Store | null>(STORE_KEY, null)
-  if (s && s.version === 1) return s
+  if (s && s.version === 3) return s
   const fresh = freshStore()
   writeJson(STORE_KEY, fresh)
   return fresh
@@ -245,15 +355,15 @@ function toCustomer(o: DemoOrder): CustomerOrder {
 }
 
 function toStaff(o: DemoOrder): StaffOrder {
-  const { token: _t, track_key: _k, client_request_id: _c, ...rest } = o
+  const { token: _t, track_key: _k, client_request_id: _c, line_costs: _l, ...rest } = o
   return clone(rest)
 }
 
-function session(): { user_id: string; role: StaffRole } | null {
+function session(): { user_id: string; role: StaffRole; name: string } | null {
   const id = readJson<string | null>(SESSION_KEY, null)
   if (!id) return null
   const member = load().staff.find((m) => m.user_id === id && m.is_active)
-  return member ? { user_id: member.user_id, role: member.role } : null
+  return member ? { user_id: member.user_id, role: member.role, name: member.display_name } : null
 }
 
 function requireStaff() {
@@ -274,6 +384,56 @@ function findCustomerOrder(s: Store, id: string, token: string) {
   return o
 }
 
+/** {field: [before, after]} for the given keys that differ. */
+function diff<T extends object>(before: T | null, after: T | null, keys: (keyof T)[]): AuditEntry['changes'] {
+  const out: AuditEntry['changes'] = {}
+  for (const k of keys) {
+    const a = before ? before[k] ?? null : null
+    const b = after ? after[k] ?? null : null
+    if (JSON.stringify(a) !== JSON.stringify(b)) out[k as string] = [a, b]
+  }
+  return out
+}
+
+function audit(s: Store, actorName: string, action: string, entity: string, entityId: string | null, label: string | null, changes: AuditEntry['changes']) {
+  if (action.endsWith('.updated') && Object.keys(changes).length === 0) return
+  s.audit.push({ id: s.nextId++, at: now(), actor: null, actor_name: actorName, action, entity, entity_id: entityId, label, changes })
+}
+
+const orderLabel = (o: StaffOrder) => `Order BS-${o.order_no} · ₹${o.total} ${o.payment_method.toUpperCase()}`
+
+/** Puts an order's tracked items back on the shelf when it is cancelled. */
+function restock(s: Store, o: DemoOrder, actor: string) {
+  const sold = new Map<string, { name: string; qty: number }>()
+  for (const m of s.movements.filter((x) => x.order_id === o.id && (x.kind === 'sale' || x.kind === 'cancel_return') && x.menu_item_id)) {
+    const v = sold.get(m.menu_item_id!) ?? { name: m.item_name, qty: 0 }
+    v.qty -= m.delta
+    sold.set(m.menu_item_id!, v)
+  }
+  for (const [itemId, v] of sold) {
+    const level = s.stock.find((x) => x.menu_item_id === itemId)
+    if (!level || v.qty <= 0) continue
+    level.on_hand += v.qty
+    level.updated_at = now()
+    s.movements.push({
+      id: s.nextId++, menu_item_id: itemId, item_name: v.name, kind: 'cancel_return', delta: v.qty, on_hand_after: level.on_hand,
+      unit_cost: null, order_id: o.id, note: null, actor_name: actor, created_at: now(),
+    })
+  }
+}
+
+const MENU_AUDIT_KEYS: (keyof MenuItem)[] = ['name', 'description', 'price', 'category_id', 'is_veg', 'is_available', 'is_popular', 'image_path']
+const EXPENSE_CATS = ['ingredients', 'salaries', 'rent', 'utilities', 'gas', 'packaging', 'maintenance', 'marketing', 'other']
+
+function validExpense(input: ExpenseInput): ExpenseInput {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.spent_on)) throw new AppError('invalid', 'Choose a date.')
+  if (!EXPENSE_CATS.includes(input.category)) throw new AppError('invalid', 'Choose a category.')
+  if (!Number.isInteger(input.amount) || input.amount < 1 || input.amount > 10_000_000) throw new AppError('invalid', 'Enter an amount in whole rupees.')
+  const note = input.note ? cleanText(input.note) : ''
+  if (note.length > 140) throw new AppError('invalid', 'Notes can be up to 140 characters.')
+  return { ...input, note: note || null }
+}
+
 // ---- backend ---------------------------------------------------------------
 export function createDemoBackend(): Backend {
   return {
@@ -286,6 +446,7 @@ export function createDemoBackend(): Backend {
         settings: clone(s.settings),
         menu: { categories: clone(s.categories).sort((a, b) => a.sort_order - b.sort_order), items: clone(s.items).sort((a, b) => a.sort_order - b.sort_order) },
         tables: clone(s.tables),
+        stock: clone(s.stock),
       }
     },
 
@@ -310,20 +471,35 @@ export function createDemoBackend(): Backend {
         const open = s.orders.filter((o) => o.customer_phone === phone && OPEN_STATUSES.includes(o.status)).length
         if (open >= 3) throw new AppError('too_many_open_orders')
 
+        const lineCosts: (number | null)[] = []
+        const wanted = new Map<string, { item: MenuItem; qty: number }>()
         const lines: OrderLine[] = input.items.map((l) => {
           if (!Number.isInteger(l.quantity) || l.quantity < 1 || l.quantity > MAX_QTY_PER_LINE) throw new AppError('invalid_quantity')
           const item = s.items.find((i) => i.id === l.menu_item_id)
           if (!item) throw new AppError('item_not_found')
-          if (!item.is_available) throw new AppError('item_unavailable')
+          if (!item.is_available) throw new AppError('item_unavailable', `${item.name} just sold out. Please remove it from your cart.`)
           if (new Set(l.addon_ids).size !== l.addon_ids.length) throw new AppError('invalid_addons')
           const valid = item.addons.filter((a) => l.addon_ids.includes(a.id) && a.is_available)
           if (valid.length !== l.addon_ids.length) throw new AppError('addon_unavailable')
           const note = l.note ? cleanText(l.note) : null
           if (note && note.length > 120) throw new AppError('invalid_note')
+          lineCosts.push(lineCost(s.costs, item, l.addon_ids))
+          const w = wanted.get(item.id) ?? { item, qty: 0 }
+          w.qty += l.quantity
+          wanted.set(item.id, w)
           return buildLine(item, l.quantity, l.addon_ids, note || null)
         })
         const units = lines.reduce((x, l) => x + l.quantity, 0)
         if (units > MAX_UNITS) throw new AppError('invalid_quantity')
+
+        const short = [...wanted.values()]
+          .map((w) => ({ ...w, level: s.stock.find((x) => x.menu_item_id === w.item.id) }))
+          .filter((w) => w.level && w.level.on_hand < w.qty)
+          .sort((a, b) => a.item.name.localeCompare(b.item.name))[0]
+        if (short) {
+          if (short.level!.on_hand === 0) throw new AppError('item_unavailable', `${short.item.name} just sold out. Please remove it from your cart.`)
+          throw new AppError('insufficient_stock', `Only ${short.level!.on_hand} ${short.item.name} left. Please lower the quantity.`)
+        }
 
         const created = now()
         const order: DemoOrder = {
@@ -331,10 +507,20 @@ export function createDemoBackend(): Backend {
           status: 'placed', payment_method: input.payment_method, payment_status: 'unpaid', customer_reported_paid_at: null,
           payment_reference: null, total: lines.reduce((x, l) => x + l.line_total, 0), item_count: units,
           cancel_reason: null, cancelled_by: null, created_at: created, updated_at: created, preparing_at: null,
-          ready_at: null, completed_at: null, cancelled_at: null, paid_at: null, items: lines,
+          ready_at: null, completed_at: null, cancelled_at: null, paid_at: null, items: lines, line_costs: lineCosts,
           token: input.access_token, track_key: uuid(), client_request_id: input.client_request_id,
         }
         s.orders.push(order)
+        for (const w of wanted.values()) {
+          const level = s.stock.find((x) => x.menu_item_id === w.item.id)
+          if (!level) continue
+          level.on_hand -= w.qty
+          level.updated_at = created
+          s.movements.push({
+            id: s.nextId++, menu_item_id: w.item.id, item_name: w.item.name, kind: 'sale', delta: -w.qty, on_hand_after: level.on_hand,
+            unit_cost: null, order_id: order.id, note: null, actor_name: 'Customer', created_at: created,
+          })
+        }
         return toCustomer(order)
       })
     },
@@ -379,6 +565,8 @@ export function createDemoBackend(): Backend {
         o.cancelled_by = 'customer'
         o.cancel_reason = 'Cancelled by customer'
         o.updated_at = now()
+        restock(s, o, 'Customer')
+        audit(s, 'Customer', 'order.cancelled', 'order', o.id, orderLabel(o), { status: ['placed', 'cancelled'], cancel_reason: [null, o.cancel_reason] })
         return toCustomer(o)
       }, id)
     },
@@ -401,18 +589,23 @@ export function createDemoBackend(): Backend {
     async getStaffSession() {
       const s = session()
       if (!s) return null
-      const account = DEMO_ACCOUNTS.find((a) => a.user_id === s.user_id)
-      const member = load().staff.find((m) => m.user_id === s.user_id)!
-      return { user_id: s.user_id, email: account?.email ?? null, display_name: member.display_name, role: member.role, is_active: true }
+      const st = load()
+      const member = st.staff.find((m) => m.user_id === s.user_id)!
+      return { user_id: s.user_id, email: member.email, display_name: member.display_name, role: member.role, is_active: true }
     },
 
     async signIn(email, password) {
       await delay(300)
-      const account = DEMO_ACCOUNTS.find((a) => a.email === email.trim().toLowerCase() && a.password === password)
+      const st = load()
+      const account = st.accounts.find((a) => a.email === email.trim().toLowerCase() && a.password === password)
       if (!account) throw new AppError('invalid_credentials')
-      const member = load().staff.find((m) => m.user_id === account.user_id)
+      const member = st.staff.find((m) => m.user_id === account.user_id)
       if (!member?.is_active) throw new AppError('not_staff')
       writeJson(SESSION_KEY, account.user_id)
+      mutate((s) => {
+        const m = s.staff.find((x) => x.user_id === account.user_id)
+        if (m) m.last_sign_in_at = now()
+      })
       authListeners.forEach((cb) => cb())
       return { user_id: account.user_id, email: account.email, display_name: member.display_name, role: member.role, is_active: true } satisfies StaffProfile
     },
@@ -449,12 +642,13 @@ export function createDemoBackend(): Backend {
 
     async changeStatus(id, change) {
       await delay()
-      requireStaff()
+      const me = requireStaff()
       return mutate((s) => {
         const o = s.orders.find((x) => x.id === id)
         if (!o || o.status !== change.from) throw new AppError('conflict')
         if (!canTransition(o.status, change.to)) throw new AppError('invalid_transition')
         const t = now()
+        const wasPaid = o.payment_status
         if (change.markPaid && o.payment_status === 'unpaid') {
           o.payment_status = 'paid'
           o.paid_at = t
@@ -470,8 +664,16 @@ export function createDemoBackend(): Backend {
         if (change.to === 'preparing') o.preparing_at = t
         if (change.to === 'ready') o.ready_at = t
         if (change.to === 'completed') o.completed_at = t
+        const from = o.status
         o.status = change.to
         o.updated_at = t
+        if (wasPaid !== o.payment_status) {
+          audit(s, me.name, 'order.marked_paid', 'order', o.id, orderLabel(o), { payment_status: [wasPaid, o.payment_status] })
+        }
+        if (change.to === 'cancelled') {
+          restock(s, o, me.name)
+          audit(s, me.name, 'order.cancelled', 'order', o.id, orderLabel(o), { status: [from, 'cancelled'], cancel_reason: [null, o.cancel_reason] })
+        }
         return toStaff(o)
       }, id)
     },
@@ -483,6 +685,7 @@ export function createDemoBackend(): Backend {
         const o = s.orders.find((x) => x.id === id)
         if (!o || o.payment_status === (paid ? 'paid' : 'unpaid')) throw new AppError('conflict')
         if (o.status === 'cancelled') throw new AppError('order_cancelled')
+        const before = { payment_status: o.payment_status, payment_reference: o.payment_reference }
         if (!paid) {
           if (me.role !== 'owner') throw new AppError('owner_only')
           if (o.status === 'completed') throw new AppError('payment_required')
@@ -495,6 +698,8 @@ export function createDemoBackend(): Backend {
           o.payment_reference = reference ? cleanText(reference).slice(0, 40) || null : null
         }
         o.updated_at = now()
+        audit(s, me.name, paid ? 'order.marked_paid' : 'order.marked_unpaid', 'order', o.id, orderLabel(o),
+          diff(before, { payment_status: o.payment_status, payment_reference: o.payment_reference }, ['payment_status', 'payment_reference']))
         return toStaff(o)
       }, id)
     },
@@ -507,13 +712,16 @@ export function createDemoBackend(): Backend {
 
     async saveMenuItem(input: MenuItemInput) {
       await delay()
-      requireOwner()
+      const me = requireOwner()
       return mutate((s) => {
         const name = cleanText(input.name)
         if (!name || name.length > 60 || !Number.isInteger(input.price) || input.price < 1 || input.price > 5000) throw new AppError('invalid')
         if (!s.categories.some((c) => c.id === input.category_id)) throw new AppError('invalid')
+        const validCost = (c: number | null | undefined, max: number) => c === undefined || c === null || (Number.isInteger(c) && c >= 0 && c <= max)
+        if (!validCost(input.cost, 5000) || input.addons.some((a) => !validCost(a.cost, 1000))) throw new AppError('invalid_cost')
         const id = input.id ?? uuid()
         const existing = s.items.find((i) => i.id === id)
+        const before = existing ? clone(existing) : null
         const names = input.addons.map((a) => cleanText(a.name).toLowerCase())
         if (new Set(names).size !== names.length) throw new AppError('duplicate', 'Two add-ons have the same name.')
         const item: MenuItem = {
@@ -533,34 +741,58 @@ export function createDemoBackend(): Backend {
         }
         if (existing) Object.assign(existing, item)
         else s.items.push(item)
+        audit(s, me.name, existing ? 'menu_item.updated' : 'menu_item.created', 'menu_item', id, name, diff(before, item, MENU_AUDIT_KEYS))
+
+        const setCost = (map: Record<string, number>, key: string, cost: number | null | undefined, label: string) => {
+          if (cost === undefined) return
+          const old = map[key] ?? null
+          if (old === cost) return
+          if (cost === null) delete map[key]
+          else map[key] = cost
+          audit(s, me.name, old === null ? 'cost.set' : cost === null ? 'cost.removed' : 'cost.changed', 'cost', key, label, { cost: [old, cost] })
+        }
+        setCost(s.costs.items, id, input.cost, name)
+        item.addons.forEach((a, idx) => setCost(s.costs.addons, a.id, input.addons[idx].cost, `${name} › ${a.name}`))
+        for (const old of before?.addons ?? []) if (!item.addons.some((a) => a.id === old.id)) delete s.costs.addons[old.id]
         return id
       })
     },
 
     async deleteMenuItem(id) {
       await delay()
-      requireOwner()
+      const me = requireOwner()
       mutate((s) => {
+        const item = s.items.find((i) => i.id === id)
+        if (!item) return
         s.items = s.items.filter((i) => i.id !== id)
+        s.stock = s.stock.filter((x) => x.menu_item_id !== id)
+        delete s.costs.items[id]
+        for (const m of s.movements) if (m.menu_item_id === id) m.menu_item_id = null
+        audit(s, me.name, 'menu_item.deleted', 'menu_item', id, item.name, diff(item, null, ['name', 'price']))
       })
     },
 
     async setItemAvailability(id, available) {
       await delay(80)
-      requireStaff()
+      const me = requireStaff()
       mutate((s) => {
         const i = s.items.find((x) => x.id === id)
         if (!i) throw new AppError('not_allowed')
+        if (i.is_available === available) return
+        audit(s, me.name, 'menu_item.updated', 'menu_item', id, i.name, { is_available: [i.is_available, available] })
         i.is_available = available
       })
     },
 
     async setAddonAvailability(id, available) {
       await delay(80)
-      requireStaff()
+      const me = requireStaff()
       mutate((s) => {
-        const a = s.items.flatMap((i) => i.addons).find((x) => x.id === id)
-        if (!a) throw new AppError('not_allowed')
+        const item = s.items.find((i) => i.addons.some((a) => a.id === id))
+        const a = item?.addons.find((x) => x.id === id)
+        if (!item || !a) throw new AppError('not_allowed')
+        if (a.is_available === available) return
+        audit(s, me.name, 'addon.updated', 'addon', id, `${item.name} › ${a.name}`, { is_available: [a.is_available, available] })
         a.is_available = available
       })
     },
@@ -582,20 +814,21 @@ export function createDemoBackend(): Backend {
 
     async createCategory(name) {
       await delay()
-      requireOwner()
+      const me = requireOwner()
       return mutate((s) => {
         const clean = cleanText(name)
         if (!clean || clean.length > 40) throw new AppError('invalid')
         if (s.categories.some((c) => c.name.toLowerCase() === clean.toLowerCase())) throw new AppError('duplicate', 'That name is already in use.')
         const c = { id: uuid(), name: clean, sort_order: Math.max(0, ...s.categories.map((x) => x.sort_order)) + 1 }
         s.categories.push(c)
+        audit(s, me.name, 'category.created', 'category', c.id, clean, { name: [null, clean] })
         return c
       })
     },
 
     async updateCategory(id, patch) {
       await delay()
-      requireOwner()
+      const me = requireOwner()
       mutate((s) => {
         const c = s.categories.find((x) => x.id === id)
         if (!c) throw new AppError('not_allowed')
@@ -603,6 +836,7 @@ export function createDemoBackend(): Backend {
           const clean = cleanText(patch.name)
           if (!clean || clean.length > 40) throw new AppError('invalid')
           if (s.categories.some((x) => x.id !== id && x.name.toLowerCase() === clean.toLowerCase())) throw new AppError('duplicate', 'That name is already in use.')
+          audit(s, me.name, 'category.updated', 'category', id, clean, diff(c, { ...c, name: clean }, ['name']))
           c.name = clean
         }
         if (patch.sort_order !== undefined) c.sort_order = patch.sort_order
@@ -611,31 +845,41 @@ export function createDemoBackend(): Backend {
 
     async deleteCategory(id) {
       await delay()
-      requireOwner()
+      const me = requireOwner()
       mutate((s) => {
         if (s.items.some((i) => i.category_id === id)) throw new AppError('in_use', 'This is still in use and can’t be deleted.')
-        s.categories = s.categories.filter((c) => c.id !== id)
+        const c = s.categories.find((x) => x.id === id)
+        s.categories = s.categories.filter((x) => x.id !== id)
+        if (c) audit(s, me.name, 'category.deleted', 'category', id, c.name, { name: [c.name, null] })
       })
     },
 
     async updateSettings(patch) {
       await delay()
-      requireOwner()
+      const me = requireOwner()
       return mutate((s) => {
         if (patch.upi_id !== undefined && patch.upi_id !== null && !isValidUpiId(patch.upi_id)) throw new AppError('invalid', 'Enter a valid UPI ID, like cafe@okaxis.')
+        const before = clone(s.settings)
         Object.assign(s.settings, patch, { updated_at: now() })
+        audit(s, me.name, 'settings.updated', 'settings', 'true', 'Café settings',
+          diff(before, s.settings, ['cafe_name', 'is_open', 'closed_message', 'upi_id', 'upi_payee_name']))
         return clone(s.settings)
       })
     },
 
     async addTables(labels) {
       await delay()
-      requireOwner()
+      const me = requireOwner()
       mutate((s) => {
         for (const label of labels) {
           const t = s.tables.find((x) => x.label === label)
-          if (t) t.is_active = true
-          else s.tables.push({ label, is_active: true })
+          if (t) {
+            if (!t.is_active) audit(s, me.name, 'table.updated', 'table', label, label, { is_active: [false, true] })
+            t.is_active = true
+          } else {
+            s.tables.push({ label, is_active: true })
+            audit(s, me.name, 'table.created', 'table', label, label, { label: [null, label] })
+          }
         }
         s.tables.sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }))
       })
@@ -643,18 +887,20 @@ export function createDemoBackend(): Backend {
 
     async setTableActive(label, active) {
       await delay(80)
-      requireOwner()
+      const me = requireOwner()
       mutate((s) => {
         const t = s.tables.find((x) => x.label === label)
         if (!t) throw new AppError('not_allowed')
+        if (t.is_active !== active) audit(s, me.name, 'table.updated', 'table', label, label, { is_active: [t.is_active, active] })
         t.is_active = active
       })
     },
 
     async deleteTable(label) {
       await delay(80)
-      requireOwner()
+      const me = requireOwner()
       mutate((s) => {
+        if (s.tables.some((t) => t.label === label)) audit(s, me.name, 'table.deleted', 'table', label, label, { label: [label, null] })
         s.tables = s.tables.filter((t) => t.label !== label)
       })
     },
@@ -672,7 +918,41 @@ export function createDemoBackend(): Backend {
         const m = s.staff.find((x) => x.user_id === userId)
         if (!m) throw new AppError('owner_only')
         if (userId === me.user_id && ((patch.role && patch.role !== m.role) || patch.is_active === false)) throw new AppError('cannot_change_own_role_or_status')
+        const before = clone(m)
         Object.assign(m, patch)
+        audit(s, me.name, 'staff.updated', 'staff', userId, m.display_name, diff(before, m, ['display_name', 'role', 'is_active']))
+      })
+    },
+
+    async createStaff(input) {
+      await delay(300)
+      const me = requireOwner()
+      return mutate((s) => {
+        const email = toLoginEmail(input.login)
+        if (!/^[a-z0-9._%+-]{1,64}@[a-z0-9.-]{1,190}\.[a-z]{2,24}$/.test(email)) throw new AppError('invalid_login')
+        const name = cleanText(input.display_name)
+        if (!name || name.length > 60) throw new AppError('invalid', 'Enter a name.')
+        if (input.role !== 'owner' && input.role !== 'kitchen') throw new AppError('invalid_role')
+        if (input.password.length < 8 || input.password.length > 72) throw new AppError('weak_password')
+        if (s.accounts.some((a) => a.email === email)) throw new AppError('login_taken')
+        const user_id = uuid()
+        s.accounts.push({ email, password: input.password, user_id })
+        s.staff.push({ user_id, display_name: name, role: input.role, is_active: true, created_at: now(), email, last_sign_in_at: null })
+        audit(s, me.name, 'staff.created', 'staff', user_id, name, { display_name: [null, name], role: [null, input.role] })
+        return { user_id, email }
+      })
+    },
+
+    async resetStaffPassword(userId, password) {
+      await delay(300)
+      const me = requireOwner()
+      mutate((s) => {
+        const account = s.accounts.find((a) => a.user_id === userId)
+        const member = s.staff.find((m) => m.user_id === userId)
+        if (!account || !member) throw new AppError('not_staff')
+        if (password.length < 8 || password.length > 72) throw new AppError('weak_password')
+        account.password = password
+        audit(s, me.name, 'staff.password_reset', 'staff', userId, member.display_name, {})
       })
     },
 
@@ -681,6 +961,172 @@ export function createDemoBackend(): Backend {
       requireOwner()
       if (toDay < fromDay || addDays(fromDay, 92) < toDay) throw new AppError('invalid_range')
       return summarize(load().orders.map(toStaff), fromDay, toDay)
+    },
+
+    async getCosts() {
+      await delay(80)
+      requireOwner()
+      return clone(load().costs)
+    },
+
+    async profitAndLoss(fromDay, toDay) {
+      await delay()
+      requireOwner()
+      if (toDay < fromDay || addDays(fromDay, 366) < toDay) throw new AppError('invalid_range')
+      const s = load()
+      return computeProfitAndLoss(
+        s.orders.map((o) => ({ ...toStaff(o), line_costs: o.line_costs })),
+        s.expenses,
+        s.movements,
+        fromDay,
+        toDay,
+      )
+    },
+
+    async listExpenses(fromDay, toDay) {
+      await delay(80)
+      requireOwner()
+      return clone(load().expenses)
+        .filter((e) => e.spent_on >= fromDay && e.spent_on <= toDay)
+        .sort((a, b) => b.spent_on.localeCompare(a.spent_on) || b.created_at.localeCompare(a.created_at))
+    },
+
+    async addExpense(input) {
+      await delay()
+      const me = requireOwner()
+      return mutate((s) => {
+        const v = validExpense(input)
+        const e: Expense = { id: uuid(), ...v, created_at: now(), updated_at: now() }
+        s.expenses.push(e)
+        audit(s, me.name, 'expense.created', 'expense', e.id, e.category, diff(null, e, ['spent_on', 'category', 'amount', 'note']))
+        return clone(e)
+      })
+    },
+
+    async updateExpense(id, input) {
+      await delay()
+      const me = requireOwner()
+      return mutate((s) => {
+        const e = s.expenses.find((x) => x.id === id)
+        if (!e) throw new AppError('owner_only')
+        const before = clone(e)
+        Object.assign(e, validExpense(input), { updated_at: now() })
+        audit(s, me.name, 'expense.updated', 'expense', id, e.category, diff(before, e, ['spent_on', 'category', 'amount', 'note']))
+        return clone(e)
+      })
+    },
+
+    async deleteExpense(id) {
+      await delay()
+      const me = requireOwner()
+      mutate((s) => {
+        const e = s.expenses.find((x) => x.id === id)
+        if (!e) throw new AppError('owner_only')
+        s.expenses = s.expenses.filter((x) => x.id !== id)
+        audit(s, me.name, 'expense.deleted', 'expense', id, e.category, diff(e, null, ['spent_on', 'category', 'amount', 'note']))
+      })
+    },
+
+    async getStock() {
+      await delay(80)
+      return clone(load().stock)
+    },
+
+    async configureStock(menuItemId, track, lowAt, onHand) {
+      await delay()
+      const me = requireOwner()
+      mutate((s) => {
+        const item = s.items.find((i) => i.id === menuItemId)
+        if (!item) throw new AppError('item_not_found')
+        if ((lowAt !== null && (!Number.isInteger(lowAt) || lowAt < 0 || lowAt > 10000)) || (onHand !== null && (!Number.isInteger(onHand) || onHand < 0 || onHand > 100000))) {
+          throw new AppError('invalid_quantity')
+        }
+        const level = s.stock.find((x) => x.menu_item_id === menuItemId)
+        if (!track) {
+          if (level) {
+            s.stock = s.stock.filter((x) => x.menu_item_id !== menuItemId)
+            audit(s, me.name, 'stock.tracking_off', 'stock', menuItemId, item.name, { on_hand: [level.on_hand, null] })
+          }
+          return
+        }
+        if (!level) {
+          const created: StockLevel = { menu_item_id: menuItemId, on_hand: onHand ?? 0, low_at: lowAt ?? 5, updated_at: now() }
+          s.stock.push(created)
+          s.movements.push({
+            id: s.nextId++, menu_item_id: menuItemId, item_name: item.name, kind: 'initial', delta: created.on_hand, on_hand_after: created.on_hand,
+            unit_cost: null, order_id: null, note: null, actor_name: me.name, created_at: now(),
+          })
+          audit(s, me.name, 'stock.tracking_on', 'stock', menuItemId, item.name, { on_hand: [null, created.on_hand], low_at: [null, created.low_at] })
+        } else if (lowAt !== null && lowAt !== level.low_at) {
+          audit(s, me.name, 'stock.low_level_changed', 'stock', menuItemId, item.name, { low_at: [level.low_at, lowAt] })
+          level.low_at = lowAt
+          level.updated_at = now()
+        }
+      })
+    },
+
+    async adjustStock(menuItemId, kind, quantity, note) {
+      await delay()
+      const me = requireStaff()
+      return mutate((s) => {
+        if (!['restock', 'waste', 'count', 'correction'].includes(kind)) throw new AppError('invalid_request')
+        if (!Number.isInteger(quantity)) throw new AppError('invalid_quantity')
+        const clean = note ? cleanText(note) : ''
+        if (clean.length > 140) throw new AppError('invalid_note')
+        const level = s.stock.find((x) => x.menu_item_id === menuItemId)
+        if (!level) throw new AppError('stock_not_tracked')
+        const item = s.items.find((i) => i.id === menuItemId)!
+        let delta: number
+        if (kind === 'restock') {
+          if (quantity < 1 || quantity > 10000) throw new AppError('invalid_quantity')
+          delta = quantity
+        } else if (kind === 'waste') {
+          if (quantity < 1) throw new AppError('invalid_quantity')
+          if (quantity > level.on_hand) throw new AppError('insufficient_stock', `Only ${level.on_hand} ${item.name} in stock.`)
+          delta = -quantity
+        } else if (kind === 'count') {
+          if (quantity < 0 || quantity > 100000) throw new AppError('invalid_quantity')
+          delta = quantity - level.on_hand
+        } else {
+          if (quantity === 0 || Math.abs(quantity) > 10000) throw new AppError('invalid_quantity')
+          if (!clean) throw new AppError('note_required')
+          if (level.on_hand + quantity < 0) throw new AppError('insufficient_stock', `Only ${level.on_hand} ${item.name} in stock.`)
+          delta = quantity
+        }
+        if (level.on_hand + delta > 100000) throw new AppError('invalid_quantity')
+        const before = level.on_hand
+        level.on_hand += delta
+        level.updated_at = now()
+        s.movements.push({
+          id: s.nextId++, menu_item_id: menuItemId, item_name: item.name, kind, delta, on_hand_after: level.on_hand,
+          unit_cost: kind === 'waste' ? s.costs.items[menuItemId] ?? null : null, order_id: null, note: clean || null,
+          actor_name: me.name, created_at: now(),
+        })
+        audit(s, me.name, `stock.${kind}`, 'stock', menuItemId, item.name, {
+          on_hand: [before, level.on_hand], ...(clean ? { note: [null, clean] as [unknown, unknown] } : {}),
+        })
+        return clone(level)
+      })
+    },
+
+    async listStockMovements(menuItemId, limit = 200) {
+      await delay(80)
+      requireOwner()
+      return clone(load().movements)
+        .filter((m) => !menuItemId || m.menu_item_id === menuItemId)
+        .sort((a, b) => b.id - a.id)
+        .slice(0, limit)
+    },
+
+    async listAudit({ fromDay, toDay, beforeId, limit = 100 }) {
+      await delay(80)
+      requireOwner()
+      const from = cafeDayStartIso(fromDay)
+      const to = cafeDayStartIso(addDays(toDay, 1))
+      return clone(load().audit)
+        .filter((a) => a.at >= from && a.at < to && (!beforeId || a.id < beforeId))
+        .sort((a, b) => b.id - a.id)
+        .slice(0, limit)
     },
   }
 }

@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { backend } from '../backend'
 import type { PublicData } from '../backend/types'
+import { applyStock } from '../lib/stock'
 
 interface PublicDataState {
   data: PublicData | null
@@ -61,4 +62,11 @@ export function usePublicData() {
   const ctx = useContext(Ctx)
   if (!ctx) throw new Error('usePublicData must be used inside PublicDataProvider')
   return ctx
+}
+
+/** Public data as students see it: tracked items at zero stock show as sold out. */
+export function useStudentData() {
+  const ctx = usePublicData()
+  const data = useMemo(() => (ctx.data ? { ...ctx.data, menu: applyStock(ctx.data.menu, ctx.data.stock) } : null), [ctx.data])
+  return { ...ctx, data }
 }

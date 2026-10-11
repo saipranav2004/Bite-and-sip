@@ -1,68 +1,47 @@
 import { useCallback, useEffect, useState } from 'react'
 import { backend } from '../../backend'
+import { KpiCard, KpiGrid, PageBody, PageHeader, Panel, PeriodPicker, SkeletonKpis, SkeletonRows, periodLabel, usePeriod } from '../../components/admin'
 import { IconDownload } from '../../components/icons'
-import { Banner, Button, PaymentBadge, Spinner, StatusBadge } from '../../components/ui'
+import { Banner, Button, PaymentBadge, StatusBadge } from '../../components/ui'
 import { friendlyError } from '../../lib/errors'
 import { addDays, cafeDate, formatDay, hourLabel, money, orderCode, timeOfDay } from '../../lib/format'
 import { paymentDisplay } from '../../lib/orderRules'
+import { change, previousPeriod } from '../../lib/pnl'
 import { ordersToCsv } from '../../lib/reports'
 import type { SalesSummary, StaffOrder } from '../../lib/types'
 
-type Preset = 'today' | 'yesterday' | '7d' | 'month' | 'custom'
-
-function rangeFor(p: Preset, custom: { from: string; to: string }) {
-  const today = cafeDate()
-  switch (p) {
-    case 'today':
-      return { from: today, to: today }
-    case 'yesterday':
-      return { from: addDays(today, -1), to: addDays(today, -1) }
-    case '7d':
-      return { from: addDays(today, -6), to: today }
-    case 'month':
-      return { from: `${today.slice(0, 8)}01`, to: today }
-    case 'custom':
-      return custom
-  }
-}
-
 export function ReportsPage() {
-  const today = cafeDate()
-  const [preset, setPreset] = useState<Preset>('today')
-  const [custom, setCustom] = useState({ from: addDays(today, -6), to: today })
+  const [period, setPeriod] = usePeriod('sales', 'today')
   const [summary, setSummary] = useState<SalesSummary | null>(null)
+  const [prev, setPrev] = useState<SalesSummary | null>(null)
   const [orders, setOrders] = useState<StaffOrder[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const range = rangeFor(preset, custom)
-  const rangeInvalid = range.to < range.from || addDays(range.from, 92) < range.to
+  const range = { from: period.from, to: period.to }
 
   const load = useCallback(async () => {
-    if (rangeInvalid) return
     setLoading(true)
     setError(null)
     try {
-      const [s, o] = await Promise.all([backend.salesSummary(range.from, range.to), backend.listOrdersInRange(range.from, range.to)])
+      const p = previousPeriod(period.from, period.to)
+      const [s, o, ps] = await Promise.all([
+        backend.salesSummary(period.from, period.to),
+        backend.listOrdersInRange(period.from, period.to),
+        backend.salesSummary(p.from, p.to).catch(() => null),
+      ])
       setSummary(s)
       setOrders(o)
+      setPrev(ps)
     } catch (err) {
       setError(friendlyError(err))
     } finally {
       setLoading(false)
     }
-  }, [range.from, range.to, rangeInvalid])
+  }, [period.from, period.to])
 
   useEffect(() => {
     void load()
   }, [load])
-
-  const presets: { id: Preset; label: string }[] = [
-    { id: 'today', label: 'Today' },
-    { id: 'yesterday', label: 'Yesterday' },
-    { id: '7d', label: 'Last 7 days' },
-    { id: 'month', label: 'This month' },
-    { id: 'custom', label: 'Custom' },
-  ]
 
   function downloadCsv() {
     if (!orders) return
@@ -75,57 +54,41 @@ export function ReportsPage() {
     setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
 
-  const label = range.from === range.to ? formatDay(range.from) : `${formatDay(range.from)} – ${formatDay(range.to)}`
+  const delta = (k: 'sales' | 'orders' | 'average_order_value') => (summary && prev ? change(summary[k], prev[k]) : undefined)
 
   return (
-    <main className="mx-auto max-w-6xl px-3 pt-3 pb-12 sm:px-4">
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="mr-auto">
-          <h1 className="text-xl font-extrabold">Reports</h1>
-          <p className="text-sm text-muted">{label} · India time · based on when orders were placed</p>
-        </div>
-        <Button variant="secondary" size="sm" onClick={downloadCsv} disabled={!orders?.length}>
-          <IconDownload size={16} /> Download CSV
-        </Button>
-      </div>
+    <PageBody>
+      <PageHeader
+        title="Sales"
+        subtitle={`${periodLabel(period)} · India time · based on when orders were placed`}
+        actions={
+          <Button variant="secondary" size="sm" onClick={downloadCsv} disabled={!orders?.length}>
+            <IconDownload size={16} /> Download CSV
+          </Button>
+        }
+      >
+        <PeriodPicker value={period} onChange={setPeriod} maxDays={92} />
+      </PageHeader>
 
-      <div className="mt-3 flex flex-wrap items-center gap-2" role="group" aria-label="Date range">
-        {presets.map((p) => (
-          <button key={p.id} type="button" className="chip" aria-pressed={preset === p.id} onClick={() => setPreset(p.id)}>
-            {p.label}
-          </button>
-        ))}
-        {preset === 'custom' && (
-          <div className="flex flex-wrap items-center gap-2">
-            <label className="flex items-center gap-1.5 text-sm font-semibold">
-              From
-              <input type="date" className="field-input w-auto py-2" max={today} value={custom.from} onChange={(e) => setCustom((c) => ({ ...c, from: e.target.value }))} />
-            </label>
-            <label className="flex items-center gap-1.5 text-sm font-semibold">
-              To
-              <input type="date" className="field-input w-auto py-2" max={today} value={custom.to} onChange={(e) => setCustom((c) => ({ ...c, to: e.target.value }))} />
-            </label>
-          </div>
-        )}
-      </div>
-      {rangeInvalid && <Banner tone="danger" className="mt-3">Choose a start date before the end date, up to 92 days apart.</Banner>}
-      {error && <Banner tone="danger" className="mt-3" action={<Button size="sm" variant="secondary" onClick={() => void load()}>Retry</Button>}>{error}</Banner>}
+      {error && <Banner tone="danger" className="mb-4" action={<Button size="sm" variant="secondary" onClick={() => void load()}>Retry</Button>}>{error}</Banner>}
 
       {loading && !summary ? (
-        <div className="grid place-items-center py-24"><Spinner label="Loading report" /></div>
+        <div className="space-y-4">
+          <SkeletonKpis />
+          <div className="card"><SkeletonRows rows={6} label="Loading report" /></div>
+        </div>
       ) : summary ? (
-        <div className={`mt-4 space-y-4 transition-opacity ${loading ? 'opacity-60' : ''}`} aria-busy={loading}>
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Stat label="Sales" value={money(summary.sales)} hint="Excludes cancelled orders" big />
-            <Stat label="Orders" value={String(summary.orders)} hint={`${summary.items_sold} items sold`} />
-            <Stat label="Average order" value={money(summary.average_order_value)} />
-            <Stat label="Open right now" value={String(summary.open_orders)} hint={summary.open_orders ? 'Not yet collected' : 'All collected'} />
-          </div>
+        <div className={`space-y-4 transition-opacity ${loading ? 'opacity-60' : ''}`} aria-busy={loading}>
+          <KpiGrid>
+            <KpiCard label="Sales" value={money(summary.sales)} delta={delta('sales')} emphasis />
+            <KpiCard label="Orders" value={String(summary.orders)} delta={delta('orders')} />
+            <KpiCard label="Average order" value={money(summary.average_order_value)} delta={delta('average_order_value')} />
+            <KpiCard label="Open right now" value={String(summary.open_orders)} hint={summary.open_orders ? 'Not yet collected' : 'All collected'} />
+          </KpiGrid>
 
           <div className="grid gap-4 lg:grid-cols-2">
-            <section className="card p-4" aria-labelledby="money-h">
-              <h2 id="money-h" className="font-extrabold">Where the money is</h2>
-              <dl className="mt-3 divide-y divide-line text-[15px]">
+            <Panel title="Where the money is" description="Only payments staff confirmed count as received.">
+              <dl className="divide-y divide-line text-[15px]">
                 <Row label="Cash collected" value={summary.cash_collected} />
                 <Row label="UPI confirmed by staff" value={summary.upi_confirmed} />
                 <Row label="Cash not yet collected" value={summary.outstanding_cash} muted />
@@ -140,14 +103,11 @@ export function ReportsPage() {
                   <dd className="tabular">{money(summary.sales)}</dd>
                 </div>
               </dl>
-              <p className="mt-2 text-xs text-muted">
-                Cash collected + UPI confirmed + not yet paid = sales. Only payments staff confirmed count as received.
-              </p>
-            </section>
+              <p className="mt-2 text-xs text-muted">Cash collected + UPI confirmed + not yet paid = sales.</p>
+            </Panel>
 
-            <section className="card p-4" aria-labelledby="cancel-h">
-              <h2 id="cancel-h" className="font-extrabold">Cancellations & refunds</h2>
-              <dl className="mt-3 divide-y divide-line text-[15px]">
+            <Panel title="Cancellations & refunds" description="Cancelled orders are not counted in sales.">
+              <dl className="divide-y divide-line text-[15px]">
                 <div className="flex items-center justify-between py-2">
                   <dt>Cancelled orders</dt>
                   <dd className="tabular font-bold">{summary.cancelled_orders} · {money(summary.cancelled_value)}</dd>
@@ -159,13 +119,11 @@ export function ReportsPage() {
                   </dd>
                 </div>
               </dl>
-              <p className="mt-2 text-xs text-muted">Cancelled orders are not counted in sales.</p>
-            </section>
+            </Panel>
           </div>
 
           <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
-            <section className="card min-w-0 p-4" aria-labelledby="trend-h">
-              <h2 id="trend-h" className="font-extrabold">{range.from === range.to ? 'Sales by hour' : 'Sales by day'}</h2>
+            <Panel title={range.from === range.to ? 'Sales by hour' : 'Sales by day'}>
               {range.from === range.to ? (
                 <BarChart data={hoursFor(summary.by_hour)} />
               ) : (
@@ -176,39 +134,38 @@ export function ReportsPage() {
                   })}
                 />
               )}
-            </section>
+            </Panel>
 
-            <section className="card p-4" aria-labelledby="top-h">
-              <h2 id="top-h" className="font-extrabold">Top items</h2>
+            <Panel title="Top items" flush>
               {summary.top_items.length === 0 ? (
                 <p className="py-8 text-center text-sm text-muted">No sales in this period.</p>
               ) : (
-                <table className="mt-2 w-full text-left text-[15px]">
-                  <thead className="text-xs text-muted uppercase">
+                <table className="dt">
+                  <thead>
                     <tr>
-                      <th className="py-1.5 font-semibold">Item</th>
-                      <th className="py-1.5 text-right font-semibold">Qty</th>
-                      <th className="py-1.5 text-right font-semibold">Sales</th>
+                      <th scope="col">Item</th>
+                      <th scope="col" className="num">Qty</th>
+                      <th scope="col" className="num">Sales</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-line">
+                  <tbody>
                     {summary.top_items.map((t) => (
                       <tr key={t.name}>
-                        <td className="py-2 font-semibold">{t.name}</td>
-                        <td className="tabular py-2 text-right">{t.quantity}</td>
-                        <td className="tabular py-2 text-right">{money(t.sales)}</td>
+                        <td className="font-semibold">{t.name}</td>
+                        <td className="num">{t.quantity}</td>
+                        <td className="num">{money(t.sales)}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               )}
-            </section>
+            </Panel>
           </div>
 
           <OrdersTable orders={orders ?? []} />
         </div>
       ) : null}
-    </main>
+    </PageBody>
   )
 }
 
@@ -228,16 +185,6 @@ function enumerateDays(from: string, to: string) {
   const out: string[] = []
   for (let d = from; d <= to; d = addDays(d, 1)) out.push(d)
   return out
-}
-
-function Stat({ label, value, hint, big }: { label: string; value: string; hint?: string; big?: boolean }) {
-  return (
-    <div className={`card p-4 ${big ? 'bg-ink text-white' : ''}`}>
-      <p className={`text-sm font-semibold ${big ? 'text-white/70' : 'text-muted'}`}>{label}</p>
-      <p className={`tabular mt-1 text-2xl font-extrabold tracking-tight sm:text-3xl ${big ? 'text-brand' : ''}`}>{value}</p>
-      {hint && <p className={`mt-0.5 text-xs ${big ? 'text-white/60' : 'text-muted'}`}>{hint}</p>}
-    </div>
-  )
 }
 
 function Row({ label, value, muted, note }: { label: string; value: number; muted?: boolean; note?: string }) {
@@ -320,32 +267,32 @@ function OrdersTable({ orders }: { orders: StaffOrder[] }) {
   const list = showAll ? orders : orders.slice(0, 25)
   return (
     <section className="card overflow-hidden" aria-labelledby="orders-h">
-      <div className="flex items-center justify-between px-4 pt-4">
-        <h2 id="orders-h" className="font-extrabold">Orders ({orders.length})</h2>
+      <div className="flex items-center justify-between border-b border-line px-4 py-3 sm:px-5">
+        <h2 id="orders-h" className="text-[15px] font-extrabold">Orders ({orders.length})</h2>
       </div>
       {orders.length === 0 ? (
         <p className="px-4 py-8 text-center text-sm text-muted">No orders in this period.</p>
       ) : (
-        <div className="mt-2 overflow-x-auto" tabIndex={0} role="region" aria-label="Orders table (scrolls sideways)">
-          <table className="w-full min-w-[720px] text-left text-sm">
-            <thead className="border-y border-line bg-sunken text-xs text-muted uppercase">
+        <div className="overflow-x-auto" tabIndex={0} role="region" aria-label="Orders table (scrolls sideways)">
+          <table className="dt min-w-[720px]">
+            <thead>
               <tr>
-                <th className="px-4 py-2.5">Order</th>
-                <th className="px-4 py-2.5">Placed</th>
-                <th className="px-4 py-2.5">Customer</th>
-                <th className="px-4 py-2.5">Status</th>
-                <th className="px-4 py-2.5">Payment</th>
-                <th className="px-4 py-2.5 text-right">Total</th>
+                <th scope="col">Order</th>
+                <th scope="col">Placed</th>
+                <th scope="col">Customer</th>
+                <th scope="col">Status</th>
+                <th scope="col">Payment</th>
+                <th scope="col" className="num">Total</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-line">
+            <tbody>
               {list.map((o) => (
                 <tr key={o.id}>
-                  <td className="tabular px-4 py-2.5 font-bold">{orderCode(o.order_no)}</td>
-                  <td className="tabular px-4 py-2.5 text-muted">{formatDay(cafeDate(new Date(o.created_at)))}, {timeOfDay(o.created_at)}</td>
-                  <td className="px-4 py-2.5">{o.customer_name}</td>
-                  <td className="px-4 py-2.5"><StatusBadge status={o.status} /></td>
-                  <td className="px-4 py-2.5">
+                  <td className="tabular font-bold">{orderCode(o.order_no)}</td>
+                  <td className="tabular whitespace-nowrap text-muted">{formatDay(cafeDate(new Date(o.created_at)))}, {timeOfDay(o.created_at)}</td>
+                  <td>{o.customer_name}</td>
+                  <td><StatusBadge status={o.status} /></td>
+                  <td>
                     {o.status === 'cancelled' && o.payment_status === 'paid' ? (
                       <span className="text-xs font-bold text-danger">Refund due</span>
                     ) : o.status === 'cancelled' ? (
@@ -354,7 +301,7 @@ function OrdersTable({ orders }: { orders: StaffOrder[] }) {
                       <PaymentBadge display={paymentDisplay(o)} method={o.payment_method} />
                     )}
                   </td>
-                  <td className={`tabular px-4 py-2.5 text-right font-bold ${o.status === 'cancelled' ? 'text-muted line-through' : ''}`}>{money(o.total)}</td>
+                  <td className={`num font-bold ${o.status === 'cancelled' ? 'text-muted line-through' : ''}`}>{money(o.total)}</td>
                 </tr>
               ))}
             </tbody>

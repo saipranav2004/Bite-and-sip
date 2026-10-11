@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { backend } from '../../backend'
+import { PageBody, PageHeader } from '../../components/admin'
 import { IconBell, IconBellOff, IconPhone, IconPin, IconRefresh } from '../../components/icons'
 import { Banner, Button, Dialog, PaymentBadge, Spinner, StatusBadge, useToast } from '../../components/ui'
 import { Chime, useStaffOrders } from '../../hooks/useStaffOrders'
@@ -83,31 +84,40 @@ export function OrdersBoard() {
   }
 
   return (
-    <main className="mx-auto max-w-[1500px] px-3 pt-3 pb-10 sm:px-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <h1 className="mr-auto text-xl font-extrabold">Orders</h1>
-        {toVerify > 0 && (
-          <span className="rounded-full bg-brand px-3 py-1.5 text-sm font-bold">
-            {toVerify} UPI {toVerify === 1 ? 'payment' : 'payments'} to check
+    <PageBody wide>
+      <PageHeader
+        title="Orders"
+        subtitle={
+          <span className="inline-flex flex-wrap items-center gap-x-2" role="status">
+            <span className="inline-flex items-center gap-1.5">
+              <span className={`size-2 rounded-full ${live === 'live' ? 'bg-ready' : 'bg-brand-strong animate-pulse'}`} aria-hidden="true" />
+              {live === 'live' ? 'Live' : 'Reconnecting…'}
+            </span>
+            {lastSync && <span>· Updated {timeOfDay(new Date(lastSync).toISOString())}</span>}
+            <span>· {open.length} open</span>
           </span>
-        )}
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-surface px-3 py-1.5 text-sm font-semibold ring-1 ring-line" role="status">
-          <span className={`size-2 rounded-full ${live === 'live' ? 'bg-ready' : 'bg-brand-strong animate-pulse'}`} aria-hidden="true" />
-          {live === 'live' ? 'Live' : 'Reconnecting…'}
-          {lastSync && <span className="text-muted">· {timeOfDay(new Date(lastSync).toISOString())}</span>}
-        </span>
-        <Button size="sm" variant="secondary" onClick={() => void refetch()} aria-label="Refresh orders">
-          <IconRefresh size={16} />
-        </Button>
-        <Button size="sm" variant={soundWanted && soundReady ? 'dark' : 'secondary'} onClick={() => void toggleSound()} aria-pressed={soundWanted && soundReady}>
-          {soundWanted && soundReady ? <IconBell size={16} /> : <IconBellOff size={16} />}
-          {soundWanted && !soundReady ? 'Tap to enable sound' : soundWanted ? 'Sound on' : 'Sound off'}
-        </Button>
-      </div>
-      {error && <Banner tone="warning" className="mt-3">{error} Showing the last orders we loaded.</Banner>}
+        }
+        actions={
+          <>
+            {toVerify > 0 && (
+              <span className="rounded-full bg-brand px-3 py-1.5 text-sm font-bold">
+                {toVerify} UPI {toVerify === 1 ? 'payment' : 'payments'} to check
+              </span>
+            )}
+            <Button size="sm" variant="secondary" onClick={() => void refetch()} aria-label="Refresh orders">
+              <IconRefresh size={16} />
+            </Button>
+            <Button size="sm" variant={soundWanted && soundReady ? 'dark' : 'secondary'} onClick={() => void toggleSound()} aria-pressed={soundWanted && soundReady}>
+              {soundWanted && soundReady ? <IconBell size={16} /> : <IconBellOff size={16} />}
+              {soundWanted && !soundReady ? 'Tap to enable sound' : soundWanted ? 'Sound on' : 'Sound off'}
+            </Button>
+          </>
+        }
+      />
+      {error && <Banner tone="warning" className="mb-3">{error} Showing the last orders we loaded.</Banner>}
 
       {/* Phone / tablet: one column at a time */}
-      <div className="mt-3 grid grid-cols-3 gap-1 rounded-2xl bg-surface p-1 ring-1 ring-line lg:hidden" role="tablist" aria-label="Order stages">
+      <div className="grid grid-cols-3 gap-1 rounded-xl bg-surface p-1 ring-1 ring-line lg:hidden" role="tablist" aria-label="Order stages">
         {COLUMNS.map((c) => (
           <button
             key={c.status}
@@ -122,7 +132,7 @@ export function OrdersBoard() {
         ))}
       </div>
 
-      <div className="mt-3 grid gap-4 lg:grid-cols-3">
+      <div className="mt-3 grid gap-4 lg:mt-0 lg:grid-cols-3">
         {COLUMNS.map((c) => (
           <section key={c.status} aria-label={c.title} className={`${tab === c.status ? '' : 'hidden'} lg:block`}>
             <h2 className="mb-2 hidden items-center gap-2 text-sm font-extrabold tracking-wide text-ink-2 uppercase lg:flex">
@@ -141,7 +151,7 @@ export function OrdersBoard() {
       </div>
 
       <DoneToday orders={done} />
-    </main>
+    </PageBody>
   )
 }
 
@@ -233,22 +243,22 @@ function OrderCard({
 
       <footer className="flex flex-wrap gap-2 bg-sunken/60 px-4 py-3">
         {order.status === 'placed' && (
-          <Button className="flex-1" loading={busy === 'prep'} disabled={!!busy} onClick={() => void run('prep', () => change('preparing'))}>
+          <Button className="flex-1 whitespace-nowrap" loading={busy === 'prep'} disabled={!!busy} onClick={() => void run('prep', () => change('preparing'))}>
             Start preparing
           </Button>
         )}
         {order.status === 'preparing' && (
-          <Button variant="success" className="flex-1" loading={busy === 'ready'} disabled={!!busy} onClick={() => void run('ready', () => change('ready'), `${orderCode(order.order_no)} is ready`)}>
+          <Button variant="success" className="flex-1 whitespace-nowrap" loading={busy === 'ready'} disabled={!!busy} onClick={() => void run('ready', () => change('ready'), `${orderCode(order.order_no)} is ready`)}>
             Mark ready
           </Button>
         )}
         {order.status === 'ready' && order.payment_status === 'paid' && (
-          <Button variant="dark" className="flex-1" loading={busy === 'done'} disabled={!!busy} onClick={() => void run('done', () => change('completed'), 'Handed over')}>
+          <Button variant="dark" className="flex-1 whitespace-nowrap" loading={busy === 'done'} disabled={!!busy} onClick={() => void run('done', () => change('completed'), 'Handed over')}>
             Hand over
           </Button>
         )}
         {order.status === 'ready' && order.payment_status === 'unpaid' && order.payment_method === 'cash' && (
-          <Button variant="dark" className="flex-1" disabled={!!busy} onClick={() => setDialog('cash')}>
+          <Button variant="dark" className="flex-1 whitespace-nowrap" disabled={!!busy} onClick={() => setDialog('cash')}>
             Collect {money(order.total)} & hand over
           </Button>
         )}

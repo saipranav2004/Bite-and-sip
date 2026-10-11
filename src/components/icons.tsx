@@ -117,3 +117,30 @@ export const IconDownload = (p: IconProps) => (
 export const IconStar = (p: IconProps) => (
   <svg {...base({ ...p, fill: 'currentColor', strokeWidth: 0 })}><path d="m12 2.5 2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4l-5.9 3.1 1.2-6.5L2.5 9.4l6.6-.9z" /></svg>
 )
+export const IconBox = (p: IconProps) => (
+  <svg {...base(p)}><path d="M21 8 12 3 3 8v8l9 5 9-5V8Z" /><path d="m3 8 9 5 9-5M12 13v8" /></svg>
+)
+export const IconTrend = (p: IconProps) => (
+  <svg {...base(p)}><path d="m3 17 6-6 4 4 8-8" /><path d="M15 7h6v6" /></svg>
+)
+export const IconWallet = (p: IconProps) => (
+  <svg {...base(p)}><path d="M19 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-3" /><path d="M21 9h-5a3 3 0 0 0 0 6h5V9Z" /></svg>
+)
+export const IconHistory = (p: IconProps) => (
+  <svg {...base(p)}><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5M12 7v5l3 2" /></svg>
+)
+export const IconUsers = (p: IconProps) => (
+  <svg {...base(p)}><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20a6.5 6.5 0 0 1 13 0" /><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.5a6.5 6.5 0 0 1 3.5 5.5" /></svg>
+)
+export const IconMore = (p: IconProps) => (
+  <svg {...base(p)}><circle cx="5" cy="12" r="1.2" fill="currentColor" /><circle cx="12" cy="12" r="1.2" fill="currentColor" /><circle cx="19" cy="12" r="1.2" fill="currentColor" /></svg>
+)
+export const IconKey = (p: IconProps) => (
+  <svg {...base(p)}><circle cx="8" cy="15" r="4" /><path d="m11 12 9-9M17 6l3 3M15 8l2 2" /></svg>
+)
+export const IconChevronDown = (p: IconProps) => (
+  <svg {...base(p)}><path d="m6 9 6 6 6-6" /></svg>
+)
+export const IconShield = (p: IconProps) => (
+  <svg {...base(p)}><path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6l-8-3Z" /></svg>
+)

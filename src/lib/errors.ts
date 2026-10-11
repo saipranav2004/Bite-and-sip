@@ -25,7 +25,17 @@ const MESSAGES: Record<string, string> = {
   reference_requires_paid: 'Add a reference only when marking the order paid.',
   kitchen_can_only_change_availability: 'Kitchen accounts can only change availability.',
   cannot_change_own_role_or_status: 'You can’t change your own role or deactivate yourself.',
-  invalid_range: 'Choose a date range of up to 92 days.',
+  invalid_range: 'Choose a valid date range (up to 92 days for sales, a year for profit & loss).',
+  insufficient_stock: 'There isn’t enough stock for that.',
+  stock_not_tracked: 'Stock isn’t tracked for this item. Turn tracking on first.',
+  note_required: 'Add a short note explaining the correction.',
+  invalid_cost: 'Enter the cost in whole rupees.',
+  login_taken: 'That username or email is already used by another account.',
+  weak_password: 'Use a password of at least 8 characters.',
+  invalid_login: 'Usernames can use letters, numbers, dots, dashes and underscores (2–40 characters).',
+  invalid_role: 'Choose Owner or Kitchen.',
+  could_not_add_staff: 'The account couldn’t be added. Please try again.',
+  not_signed_in: 'Your session has expired. Please sign in again.',
   conflict: 'Someone else updated this order first. The board has been refreshed.',
   network: 'You seem to be offline. Check your connection and try again.',
   invalid_credentials: 'Email or password is incorrect.',
@@ -49,8 +59,15 @@ export function friendlyError(err: unknown): string {
 
 export function toAppError(err: unknown): AppError {
   if (err instanceof AppError) return err
-  const raw = err as { message?: string; code?: string } | null
+  const raw = err as { message?: string; code?: string; details?: string | null; hint?: string | null } | null
   const msg = raw?.message ?? ''
+  // Stock errors name the item (details) and, when some is left, how many (hint).
+  if (msg === 'insufficient_stock' && raw?.details) {
+    return new AppError(msg, `Only ${raw.hint ?? 'a few'} ${raw.details} left. Please lower the quantity.`)
+  }
+  if (msg === 'item_unavailable' && raw?.details) {
+    return new AppError(msg, `${raw.details} just sold out. Please remove it from your cart.`)
+  }
   if (MESSAGES[msg]) return new AppError(msg)
   if (/fetch|network|Failed to fetch|Load failed/i.test(msg)) return new AppError('network')
   if (raw?.code === '42501') return new AppError('not_allowed')
