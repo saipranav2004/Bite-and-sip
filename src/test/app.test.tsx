@@ -107,7 +107,7 @@ describe('staff access', () => {
   it('redirects to login and rejects wrong passwords', async () => {
     const user = await renderApp('/staff/reports')
     await screen.findByRole('heading', { name: 'Staff sign in' })
-    await user.type(screen.getByLabelText('Email'), 'kitchen@demo.bitesip')
+    await user.type(screen.getByLabelText('Username or email'), 'kitchen@demo.bitesip')
     await user.type(screen.getByLabelText('Password'), 'wrong')
     await user.click(screen.getByRole('button', { name: 'Sign in' }))
     expect(await screen.findByText(/incorrect/)).toBeInTheDocument()

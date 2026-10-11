@@ -12,7 +12,7 @@ export const KITCHEN = {
 
 export async function signIn(page: Page, who: { email: string; password: string }) {
   await page.goto('/staff/login')
-  const email = page.getByLabel('Email')
+  const email = page.getByLabel('Username or email')
   const signOut = page.getByRole('button', { name: 'Sign out' })
   // Already signed in → the login page redirects to the board; sign out first.
   await expect(email.or(signOut)).toBeVisible()

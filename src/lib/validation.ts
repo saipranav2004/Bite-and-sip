@@ -27,3 +27,11 @@ export function normalizeTableLabel(value: string | null | undefined) {
   const v = value.trim().toUpperCase()
   return /^[A-Z0-9-]{1,10}$/.test(v) ? v : null
 }
+
+/** Staff may sign in with a short username ("admin"); it maps to a login address on the café's own domain. */
+export const STAFF_LOGIN_DOMAIN = 'bite.local'
+
+export function toLoginEmail(value: string) {
+  const v = value.trim().toLowerCase()
+  return v.includes('@') ? v : `${v}@${STAFF_LOGIN_DOMAIN}`
+}

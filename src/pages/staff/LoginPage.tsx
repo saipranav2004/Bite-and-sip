@@ -4,6 +4,7 @@ import { isDemo } from '../../backend'
 import { DEMO_ACCOUNTS } from '../../backend/demo'
 import { Banner, Button, Spinner } from '../../components/ui'
 import { friendlyError } from '../../lib/errors'
+import { toLoginEmail } from '../../lib/validation'
 import { useStaffSession } from '../../state/staffSession'
 
 export function LoginPage() {
@@ -24,13 +25,13 @@ export function LoginPage() {
   async function submit(e: FormEvent) {
     e.preventDefault()
     if (!email.trim() || !password) {
-      setError('Enter your email and password.')
+      setError('Enter your username and password.')
       return
     }
     setBusy(true)
     setError(null)
     try {
-      await signIn(email, password)
+      await signIn(toLoginEmail(email), password)
       navigate(from.startsWith('/staff') ? from : '/staff', { replace: true })
     } catch (err) {
       setError(friendlyError(err))
@@ -50,8 +51,8 @@ export function LoginPage() {
         <form onSubmit={submit} noValidate className="mt-6 space-y-4 rounded-3xl bg-surface p-5">
           {error && <Banner tone="danger">{error}</Banner>}
           <div>
-            <label htmlFor={emailId} className="label">Email</label>
-            <input id={emailId} type="email" autoComplete="username" className="field-input" value={email} onChange={(e) => setEmail(e.target.value)} />
+            <label htmlFor={emailId} className="label">Username or email</label>
+            <input id={emailId} type="text" autoCapitalize="none" autoCorrect="off" spellCheck={false} autoComplete="username" className="field-input" value={email} onChange={(e) => setEmail(e.target.value)} />
           </div>
           <div>
             <label htmlFor={passwordId} className="label">Password</label>

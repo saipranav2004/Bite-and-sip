@@ -6,7 +6,7 @@ import { clampQty, lineKey, priceCart, unitPrice } from './pricing'
 import { ordersToCsv, summarize } from './reports'
 import type { MenuItem, StaffOrder } from './types'
 import { buildUpiLink, isValidUpiId } from './upi'
-import { normalizePhone, normalizeTableLabel, validateName, validatePhone } from './validation'
+import { normalizePhone, normalizeTableLabel, toLoginEmail, validateName, validatePhone } from './validation'
 
 const items: MenuItem[] = catalog.items.map((i) => ({
   ...i,
@@ -113,6 +113,11 @@ describe('UPI link', () => {
 })
 
 describe('validation', () => {
+  it('maps a short staff username to a login email', () => {
+    expect(toLoginEmail(' Admin ')).toBe('admin@bite.local')
+    expect(toLoginEmail('owner@demo.bitesip')).toBe('owner@demo.bitesip')
+  })
+
   it('normalises Indian mobile numbers', () => {
     expect(normalizePhone('+91 98765 43210')).toBe('9876543210')
     expect(normalizePhone('09876543210')).toBe('9876543210')
