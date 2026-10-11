@@ -46,20 +46,6 @@ export function createSupabaseBackend(url: string, key: string): Backend {
     return { ...data, email }
   }
 
-  /** Calls the staff-admin Edge Function and turns its error codes into AppErrors. */
-  async function staffAdmin(body: Record<string, unknown>): Promise<unknown> {
-    const { data, error } = await sb.functions.invoke('staff-admin', { body })
-    if (!error) return data
-    const ctx = (error as { context?: Response }).context
-    let code = ''
-    try {
-      code = ((await ctx?.json()) as { error?: string } | undefined)?.error ?? ''
-    } catch {
-      /* not JSON */
-    }
-    throw code ? new AppError(code) : toAppError(error)
-  }
-
   const backend: Backend = {
     mode: 'supabase',
 
@@ -305,12 +291,16 @@ export function createSupabaseBackend(url: string, key: string): Backend {
       if ((unwrap(res) ?? []).length === 0) throw new AppError('owner_only')
     },
 
-    async createStaff(input) {
-      return (await staffAdmin({ action: 'create', ...input })) as { user_id: string; email: string }
-    },
-
-    async resetStaffPassword(userId, password) {
-      await staffAdmin({ action: 'reset_password', user_id: userId, password })
+    async changeOwnPassword(current, next) {
+      const { data } = await sb.auth.getSession()
+      const email = data.session?.user.email
+      if (!email) throw new AppError('not_signed_in')
+      if (next.length < 8 || next.length > 72) throw new AppError('weak_password')
+      // Re-check the current password so an unattended, signed-in screen can't be used to take the account over.
+      const check = await sb.auth.signInWithPassword({ email, password: current })
+      if (check.error) throw new AppError('wrong_password')
+      const { error } = await sb.auth.updateUser({ password: next })
+      if (error) throw /password/i.test(error.message) ? new AppError('weak_password') : toAppError(error)
     },
 
     async salesSummary(fromDay, toDay) {

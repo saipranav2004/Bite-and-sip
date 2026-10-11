@@ -1,6 +1,6 @@
 # Bite & Sip — College Café Ordering
 
-Students scan a table QR, order from their phone, pay cash or UPI, and get told when to collect at the counter. Kitchen staff work a live orders board. The owner runs the whole café from one console: menu and costs, stock, expenses, profit & loss, team logins, an audit log, UPI and table QR codes.
+Students scan a table QR, order from their phone, pay cash or UPI, and get told when to collect at the counter. The owner runs the whole café from one login: the live orders board and payments, menu and costs, stock, expenses, profit & loss, an audit log, UPI and table QR codes. Cooks don't need an account.
 
 **Stack:** React 19 · Vite · Tailwind CSS v4 · Supabase (Postgres, Auth, Realtime, Storage) · Vercel.
 
@@ -10,16 +10,15 @@ Students scan a table QR, order from their phone, pay cash or UPI, and get told 
   - menu with real photos, search, categories and add-ons
   - one-page checkout (name + mobile), cash or UPI (QR + deep link)
   - live order tracking, self-cancel before preparation, "My orders" on the device
-- **Kitchen:**
-  - live board (New → Preparing → Ready) with a sound alert and ticket timers
+- **Owner, at the counter:**
+  - live board (New → Preparing → Ready) with a sound alert, ticket timers and today's takings
   - UPI payment checks, cash collection at handover, cancellations with reasons
-  - sold-out switches
-- **Owner:**
+  - one-tap open / close for orders, sold-out switches
+- **Owner, running the business:**
   - menu editing (photos, prices, add-ons, categories) with the cost to make each item and live margins
   - **Inventory:** track batch items (samosas, sandwiches); orders reduce stock, cancellations return it, items sell out by themselves at zero; received / waste / recount / correction with history and low-stock alerts
   - **Expenses:** log wages, rent, gas, ingredients… by category
   - **Profit & loss:** sales − food cost = gross profit − running costs − waste = net profit, with margins, previous-period comparison, per-item profit and CSV export. Food cost comes from item costs *or* ingredient purchases — never both, so nothing is counted twice
-  - **Team:** add kitchen or owner logins with a simple username, reset passwords, remove access — no scripts needed
   - **Audit log:** every change to prices, costs, stock, payments, staff and settings, who made it and when; append-only, CSV export
   - sales reports that reconcile cash, confirmed UPI and unpaid amounts; café open/closed, UPI ID with ₹1 test QR, tables and printable QR codes
 - **Security:**
@@ -29,7 +28,6 @@ Students scan a table QR, order from their phone, pay cash or UPI, and get told 
   - order and payment state machine enforced by triggers
   - only staff can mark orders paid
   - costs, expenses, profit and the audit log are owner-only (kitchen logins never see them)
-  - staff logins are created server-side by an Edge Function that checks the caller is an owner
 
 ## Try it in 30 seconds (no accounts)
 ```bash
@@ -55,16 +53,15 @@ npm run dev
 ## Deploy
 ### Supabase
 1. Create a project (Mumbai region recommended).
-2. Push the schema and the staff-accounts function:
+2. Push the schema:
    ```bash
    npx supabase login
    npx supabase link --project-ref <ref>
    npx supabase db push
-   npx supabase functions deploy staff-admin
    ```
 3. Optional: run `supabase/seed.sql` in the SQL editor for the starter menu. Then set your real UPI ID in Settings.
 4. Authentication: turn **off** "Allow new users to sign up" and set the Site URL to your Vercel URL.
-5. Create the first owner account from your computer (the secret key never goes into Vercel or git). Add everyone else from **Team** in the app.
+5. Create the owner account from your computer (the secret key never goes into Vercel or git). Change its password later from **Settings → Your login**.
    ```bash
    SUPABASE_URL=https://<ref>.supabase.co SUPABASE_SECRET_KEY=<secret> \
      node scripts/create-staff.mjs --email admin@bite.local --name "Owner" --role owner
@@ -103,7 +100,7 @@ src/
   lib/          Pricing, order rules, stock, profit & loss, audit wording, UPI, validation, reports
   pages/        student/ and staff/ screens
   state/        Cart, device secrets, menu data, staff session
-supabase/       config, migrations (schema, security, business rules), staff-admin function, seed
+supabase/       config, migrations (schema, security, business rules), seed
 scripts/        staff accounts, seeds, walkthrough video tooling
 tests/          db/ (security, local Supabase) and e2e/ (Playwright)
 ```

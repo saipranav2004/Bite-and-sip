@@ -3,7 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { randomUUID } from 'node:crypto'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { cafeDate } from '../../src/lib/format'
-import { ITEM, addon, admin, anonClient, env, placeOrder, setSettings, staffClient } from './helpers'
+import { ITEM, addon, admin, anonClient, placeOrder, setSettings, staffClient } from './helpers'
 
 const SANDWICH = ITEM['Veg Sandwich']
 const OMELETTE = ITEM['Bread Omelette']
@@ -384,68 +384,5 @@ describe('staff management', () => {
     expect(o.error).toBeNull()
     const entry = await latestAudit(data.user!.id, 'staff.created')
     expect(entry?.actor_name).toBe('Asha Owner')
-  })
-})
-
-describe('staff accounts (staff-admin function)', () => {
-  async function callStaffAdmin(client: SupabaseClient | null, body: unknown) {
-    const token = client ? (await client.auth.getSession()).data.session?.access_token : undefined
-    const res = await fetch(`${env.url}/functions/v1/staff-admin`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', apikey: env.publishableKey, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-      body: JSON.stringify(body),
-    })
-    return { status: res.status, body: await res.json().catch(() => null) }
-  }
-
-  const login = `cook${randomUUID().slice(0, 6)}`
-
-  it('lets an owner create a login with just a username', async () => {
-    const res = await callStaffAdmin(owner, { action: 'create', login, display_name: '  Meena   Cook ', role: 'kitchen', password: 'Kitchen.2026' })
-    expect(res.status).toBe(200)
-    expect(res.body.email).toBe(`${login}@bite.local`)
-
-    const c = anonClient()
-    const signIn = await c.auth.signInWithPassword({ email: `${login}@bite.local`, password: 'Kitchen.2026' })
-    expect(signIn.error).toBeNull()
-    const row = await c.from('staff').select('display_name, role').eq('user_id', signIn.data.user!.id).single()
-    expect(row.data).toEqual({ display_name: 'Meena Cook', role: 'kitchen' })
-    const entry = await latestAudit(signIn.data.user!.id, 'staff.created')
-    expect(entry?.actor_name).toBe('Asha Owner')
-  })
-
-  it('rejects duplicates, weak passwords and bad input', async () => {
-    expect((await callStaffAdmin(owner, { action: 'create', login, display_name: 'X', role: 'kitchen', password: 'Another.2026' })).body.error).toBe('login_taken')
-    expect((await callStaffAdmin(owner, { action: 'create', login: 'shorty1', display_name: 'X', role: 'kitchen', password: 'short' })).body.error).toBe('weak_password')
-    expect((await callStaffAdmin(owner, { action: 'create', login: 'bad name!', display_name: 'X', role: 'kitchen', password: 'Another.2026' })).body.error).toBe('invalid_login')
-    expect((await callStaffAdmin(owner, { action: 'create', login: 'boss1', display_name: 'X', role: 'admin', password: 'Another.2026' })).body.error).toBe('invalid_role')
-    expect((await callStaffAdmin(owner, { action: 'explode' })).body.error).toBe('invalid_request')
-  })
-
-  it('refuses kitchen staff, non-staff and anonymous callers', async () => {
-    for (const c of [kitchen, intruder]) {
-      const res = await callStaffAdmin(c, { action: 'create', login: 'sneaky1', display_name: 'S', role: 'owner', password: 'Sneaky.2026' })
-      expect(res.status).toBe(403)
-    }
-    const res = await callStaffAdmin(null, { action: 'create', login: 'sneaky1', display_name: 'S', role: 'owner', password: 'Sneaky.2026' })
-    expect(res.status).toBe(401)
-    const { data } = await admin.auth.admin.listUsers({ perPage: 1000 })
-    expect(data.users.some((u) => u.email === 'sneaky1@bite.local')).toBe(false)
-  })
-
-  it('resets a staff password and records who did it', async () => {
-    const dir = await owner.rpc('staff_directory')
-    const meena = (dir.data as any[]).find((m) => m.email === `${login}@bite.local`)
-    const res = await callStaffAdmin(owner, { action: 'reset_password', user_id: meena.user_id, password: 'Fresh.Pass.2026' })
-    expect(res.status).toBe(200)
-    const c = anonClient()
-    expect((await c.auth.signInWithPassword({ email: `${login}@bite.local`, password: 'Kitchen.2026' })).error).not.toBeNull()
-    expect((await c.auth.signInWithPassword({ email: `${login}@bite.local`, password: 'Fresh.Pass.2026' })).error).toBeNull()
-    const entry = await latestAudit(meena.user_id, 'staff.password_reset')
-    expect(entry?.actor_name).toBe('Asha Owner')
-    expect(entry?.label).toBe('Meena Cook')
-
-    const k = await callStaffAdmin(kitchen, { action: 'reset_password', user_id: meena.user_id, password: 'Hijack.2026!' })
-    expect(k.status).toBe(403)
   })
 })

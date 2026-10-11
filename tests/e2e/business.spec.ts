@@ -129,40 +129,40 @@ test('expenses feed profit & loss, and the statement adds up', async ({ page }) 
   }
 })
 
-test('team: owner adds a kitchen login by username; it signs in with limited access; owner removes it', async ({ page }) => {
-  const username = `cook${Date.now() % 1000000}`
-  const name = `E2E Cook ${username.slice(4)}`
-  const password = 'Cook.E2E.2026'
+test('owner changes their own password, which needs the current one', async ({ page }) => {
+  const temp = 'Temp.E2E.Pass.2026'
   await signIn(page, OWNER)
-  await page.goto('/staff/team')
-  await page.getByRole('button', { name: 'Add team member' }).first().click()
-  const form = page.getByRole('dialog')
-  await form.getByLabel('Name', { exact: true }).fill(name)
-  await form.getByLabel('Username').fill(username)
-  await form.getByLabel('Kitchen').check()
-  await form.getByLabel('Password').fill(password)
-  await form.getByRole('button', { name: 'Create login' }).click()
-  await expect(form.getByText('Share these with them privately')).toBeVisible()
-  await expect(form.getByText(username, { exact: true })).toBeVisible()
-  await form.getByRole('button', { name: 'Finish' }).click()
+  await page.goto('/staff/settings')
+  const form = page.getByRole('region', { name: 'Your login' })
+  await form.getByLabel('Current password').fill('definitely-wrong')
+  await form.getByLabel('New password', { exact: true }).fill(temp)
+  await form.getByLabel('New password again').fill(temp)
+  await form.getByRole('button', { name: 'Change password' }).click()
+  await expect(form.getByText('Your current password is incorrect.')).toBeVisible()
 
-  await signIn(page, { email: username, password })
-  await expect(page.getByRole('link', { name: /Inventory/ }).first()).toBeVisible()
-  await expect(page.getByRole('link', { name: /Profit & loss/ })).toHaveCount(0)
-  await expect(page.getByRole('link', { name: /Team/ })).toHaveCount(0)
-  await page.goto('/staff/team')
-  await expect(page.getByRole('heading', { name: 'Orders' })).toBeVisible()
+  await form.getByLabel('Current password').fill(OWNER.password)
+  await form.getByRole('button', { name: 'Change password' }).click()
+  await expect(page.getByText('Password changed')).toBeVisible()
+  try {
+    await signIn(page, { email: OWNER.email, password: temp })
+  } finally {
+    // Put the original password back for the other tests.
+    await page.goto('/staff/settings')
+    const f = page.getByRole('region', { name: 'Your login' })
+    await f.getByLabel('Current password').fill(temp)
+    await f.getByLabel('New password', { exact: true }).fill(OWNER.password)
+    await f.getByLabel('New password again').fill(OWNER.password)
+    await f.getByRole('button', { name: 'Change password' }).click()
+    await expect(page.getByText('Password changed')).toBeVisible()
+  }
+})
 
+test('owner opens and closes the café from the header in one place', async ({ page }) => {
   await signIn(page, OWNER)
-  await page.goto('/staff/team')
-  await page.getByRole('switch', { name: `${name} can sign in` }).first().click()
-  await page.getByRole('dialog').getByRole('button', { name: 'Remove access' }).click()
-  await expect(page.getByText(`Access removed for ${name}`)).toBeVisible()
-
-  // Their login no longer opens the console.
-  await page.getByRole('button', { name: 'Sign out' }).click()
-  await page.getByLabel('Username or email').fill(username)
-  await page.getByLabel('Password').fill(password)
-  await page.getByRole('button', { name: 'Sign in' }).click()
-  await expect(page.getByText(/doesn’t have staff access/)).toBeVisible()
+  await page.getByRole('button', { name: /Café is open/ }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Close café' }).click()
+  await expect(page.getByText('Closed — orders paused')).toBeVisible()
+  await page.getByRole('button', { name: /Café is closed/ }).click()
+  await expect(page.getByText('Open — taking orders')).toBeVisible()
+  await expect(page.getByRole('button', { name: /Café is open/ })).toBeVisible()
 })

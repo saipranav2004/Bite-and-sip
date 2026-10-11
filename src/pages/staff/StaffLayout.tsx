@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { Navigate, NavLink, Outlet, useLocation } from 'react-router-dom'
-import { isDemo } from '../../backend'
+import { backend, isDemo } from '../../backend'
 import {
-  IconBoard, IconBox, IconChart, IconHistory, IconLogOut, IconMenuBook, IconMore, IconSettings, IconTrend, IconUsers, IconWallet,
+  IconBoard, IconBox, IconChart, IconHistory, IconLogOut, IconMenuBook, IconMore, IconSettings, IconTrend, IconWallet,
 } from '../../components/icons'
-import { Dialog, Spinner, Wordmark } from '../../components/ui'
+import { Button, Dialog, Spinner, useToast, Wordmark } from '../../components/ui'
+import { friendlyError } from '../../lib/errors'
 import type { StaffProfile } from '../../lib/types'
 import { usePublicData } from '../../state/publicData'
 import { useStaffSession } from '../../state/staffSession'
@@ -47,7 +48,6 @@ const GROUPS: { label: string; items: NavEntry[] }[] = [
   {
     label: 'Admin',
     items: [
-      { to: '/staff/team', label: 'Team', icon: IconUsers, owner: true },
       { to: '/staff/audit', label: 'Audit log', icon: IconHistory, owner: true },
       { to: '/staff/settings', label: 'Settings', icon: IconSettings, owner: true },
     ],
@@ -116,7 +116,7 @@ export function StaffLayout() {
           ))}
         </nav>
         <div className="shrink-0 border-t border-white/10 p-2 xl:p-3">
-          {data && <CafeStatus open={!!open} compact />}
+          {data && (owner ? <CafeSwitch open={!!open} compact /> : <CafeStatus open={!!open} compact />)}
           <div className="mt-2 flex items-center gap-2">
             <Avatar profile={profile} />
             <span className="hidden min-w-0 flex-1 leading-tight xl:block">
@@ -151,17 +151,20 @@ export function StaffLayout() {
       <header className="no-print sticky top-0 z-30 flex h-14 items-center gap-3 bg-ink px-4 text-white md:hidden">
         <Wordmark onDark className="text-[14px]" />
         <div className="ml-auto flex items-center gap-2">
-          {data && <CafeStatus open={!!open} />}
-          <button
-            type="button"
-            className="grid size-10 place-items-center rounded-full hover:bg-white/10"
-            aria-label="Sign out"
-            title="Sign out"
-            disabled={signingOut}
-            onClick={doSignOut}
-          >
-            <IconLogOut size={18} />
-          </button>
+          {data && (owner ? <CafeSwitch open={!!open} /> : <CafeStatus open={!!open} />)}
+          {/* Owners sign out from More, away from the busy top bar, so a mis-tap mid-rush can't log them out. */}
+          {!owner && (
+            <button
+              type="button"
+              className="grid size-10 place-items-center rounded-full hover:bg-white/10"
+              aria-label="Sign out"
+              title="Sign out"
+              disabled={signingOut}
+              onClick={doSignOut}
+            >
+              <IconLogOut size={18} />
+            </button>
+          )}
         </div>
       </header>
 
@@ -221,6 +224,11 @@ export function StaffLayout() {
                 </div>
               )
             })}
+            <div className="mt-3 border-t border-line pt-3">
+              <button type="button" onClick={doSignOut} disabled={signingOut} className="flex min-h-12 w-full items-center gap-3 rounded-lg px-3 font-semibold text-danger hover:bg-danger-soft">
+                <IconLogOut size={19} /> Sign out
+              </button>
+            </div>
           </nav>
         </Dialog>
       )}
@@ -291,6 +299,63 @@ function CountBadge({ n }: { n: number }) {
       {n}
       <span className="sr-only"> low on stock</span>
     </span>
+  )
+}
+
+/** One tap to reopen; closing asks first, because students can't order until it's reopened. */
+function CafeSwitch({ open, compact = false }: { open: boolean; compact?: boolean }) {
+  const { refresh } = usePublicData()
+  const toast = useToast()
+  const [confirm, setConfirm] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  async function set(next: boolean) {
+    setBusy(true)
+    try {
+      await backend.updateSettings({ is_open: next })
+      await refresh()
+      toast(next ? 'Open — taking orders' : 'Closed — orders paused', 'success')
+      setConfirm(false)
+    } catch (e) {
+      toast(friendlyError(e), 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => (open ? setConfirm(true) : void set(true))}
+        aria-label={open ? 'Café is open. Stop taking orders' : 'Café is closed. Start taking orders'}
+        title={open ? 'Taking orders — tap to close' : 'Closed — tap to open'}
+        className={`inline-flex min-h-8 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold transition-colors ${
+          open ? 'bg-ready text-white hover:bg-ready/85' : 'bg-danger text-white hover:bg-danger/85'
+        } ${compact ? 'w-full justify-center xl:w-auto xl:justify-start' : ''}`}
+      >
+        <span className={compact ? 'sr-only xl:not-sr-only' : ''}>{open ? 'Open' : 'Closed'}</span>
+        <span className={`relative inline-block h-4 w-7 shrink-0 rounded-full bg-black/25 ${compact ? 'hidden xl:inline-block' : ''}`} aria-hidden="true">
+          <span className={`absolute top-0.5 size-3 rounded-full bg-white transition-transform ${open ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+        </span>
+        {compact && <span className={`size-2 rounded-full bg-white xl:hidden ${open ? 'animate-pulse' : ''}`} aria-hidden="true" />}
+      </button>
+      <Dialog
+        open={confirm}
+        onClose={() => setConfirm(false)}
+        title="Stop taking orders?"
+        size="sm"
+        footer={
+          <div className="flex gap-2">
+            <Button variant="secondary" className="flex-1" onClick={() => setConfirm(false)}>Keep open</Button>
+            <Button variant="danger" className="flex-1" loading={busy} onClick={() => void set(false)}>Close café</Button>
+          </div>
+        }
+      >
+        <p className="p-5 text-sm">Students will see that you’re closed and can’t place new orders. Orders already placed stay on your board. You can change the closed message in Settings.</p>
+      </Dialog>
+    </>
   )
 }
 

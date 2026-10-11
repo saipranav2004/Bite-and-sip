@@ -1,6 +1,6 @@
 import type {
   AuditEntry, AuditQuery, CafeSettings, CafeTable, Category, Costs, CustomerOrder, Expense, ExpenseInput, Menu,
-  NewStaffInput, OrderStatus, PlaceOrderInput, ProfitAndLossData, SalesSummary, StaffMember, StaffOrder, StaffProfile,
+  OrderStatus, PlaceOrderInput, ProfitAndLossData, SalesSummary, StaffMember, StaffOrder, StaffProfile,
   StaffRole, StockAdjustKind, StockLevel, StockMovement,
 } from '../lib/types'
 
@@ -84,8 +84,8 @@ export interface Backend {
   deleteTable(label: string): Promise<void>
   listStaff(): Promise<StaffMember[]>
   updateStaff(userId: string, patch: Partial<{ role: StaffRole; is_active: boolean; display_name: string }>): Promise<void>
-  createStaff(input: NewStaffInput): Promise<{ user_id: string; email: string }>
-  resetStaffPassword(userId: string, password: string): Promise<void>
+  /** Signed-in user: checks the current password, then sets a new one. */
+  changeOwnPassword(current: string, next: string): Promise<void>
   salesSummary(fromDay: string, toDay: string): Promise<SalesSummary>
 
   // Costs & profit (owner)

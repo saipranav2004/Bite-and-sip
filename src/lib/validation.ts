@@ -35,3 +35,9 @@ export function toLoginEmail(value: string) {
   const v = value.trim().toLowerCase()
   return v.includes('@') ? v : `${v}@${STAFF_LOGIN_DOMAIN}`
 }
+
+/** Shows "admin" for admin@bite.local, otherwise the full email. */
+export function loginName(email: string | null) {
+  if (!email) return '—'
+  return email.endsWith(`@${STAFF_LOGIN_DOMAIN}`) ? email.slice(0, -STAFF_LOGIN_DOMAIN.length - 1) : email
+}

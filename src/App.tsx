@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { BrowserRouter, HashRouter, MemoryRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { shouldShowIntro, Splash } from './components/Splash'
-import { ToastProvider } from './components/ui'
+import { ToastProvider, useClearToastsOn } from './components/ui'
 import { NotFound } from './pages/NotFound'
 import { AuditLogPage } from './pages/staff/AuditLogPage'
 import { ExpensesPage } from './pages/staff/ExpensesPage'
@@ -14,7 +14,6 @@ import { ProfitLossPage } from './pages/staff/ProfitLossPage'
 import { ReportsPage } from './pages/staff/ReportsPage'
 import { SettingsPage } from './pages/staff/SettingsPage'
 import { RequireStaff, StaffLayout } from './pages/staff/StaffLayout'
-import { TeamPage } from './pages/staff/TeamPage'
 import { CartPage } from './pages/student/CartPage'
 import { MenuPage } from './pages/student/MenuPage'
 import { MyOrdersPage } from './pages/student/MyOrdersPage'
@@ -25,6 +24,8 @@ import { PublicDataProvider, usePublicData } from './state/publicData'
 import { StaffSessionProvider } from './state/staffSession'
 
 export function AppRoutes() {
+  const location = useLocation()
+  useClearToastsOn(location.pathname)
   return (
     <Routes>
       <Route path="/" element={<MenuPage />} />
@@ -42,7 +43,6 @@ export function AppRoutes() {
         <Route path="reports" element={<RequireStaff ownerOnly><ReportsPage /></RequireStaff>} />
         <Route path="profit" element={<RequireStaff ownerOnly><ProfitLossPage /></RequireStaff>} />
         <Route path="expenses" element={<RequireStaff ownerOnly><ExpensesPage /></RequireStaff>} />
-        <Route path="team" element={<RequireStaff ownerOnly><TeamPage /></RequireStaff>} />
         <Route path="audit" element={<RequireStaff ownerOnly><AuditLogPage /></RequireStaff>} />
         <Route path="settings" element={<RequireStaff ownerOnly><SettingsPage /></RequireStaff>} />
         <Route path="*" element={<Navigate to="/staff" replace />} />

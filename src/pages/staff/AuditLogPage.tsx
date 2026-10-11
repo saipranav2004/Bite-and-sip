@@ -100,7 +100,7 @@ export function AuditLogPage() {
     <PageBody>
       <PageHeader
         title="Audit log"
-        subtitle="Every change to prices, stock, payments, staff and settings — who did it and when. Entries can’t be edited or deleted."
+        subtitle="A history of every change to prices, costs, stock, payments and settings, with the time it happened. Entries can’t be edited or deleted."
         actions={<Button size="sm" variant="secondary" onClick={exportCsv} disabled={!shown.length}><IconDownload size={16} /> Export CSV</Button>}
       >
         <PeriodPicker value={period} onChange={setPeriod} maxDays={366} />

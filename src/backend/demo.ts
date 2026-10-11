@@ -15,7 +15,7 @@ import type {
   AuditEntry, CafeSettings, CafeTable, Category, Costs, CustomerOrder, Expense, ExpenseInput, MenuItem, OrderLine,
   PaymentMethod, PlaceOrderInput, StaffMember, StaffOrder, StaffProfile, StaffRole, StockLevel, StockMovement,
 } from '../lib/types'
-import { cleanText, normalizePhone, normalizeTableLabel, toLoginEmail } from '../lib/validation'
+import { cleanText, normalizePhone, normalizeTableLabel } from '../lib/validation'
 import { isValidUpiId } from '../lib/upi'
 import { bundledImage, isBundledImage } from '../lib/images'
 import type { Backend, LiveStatus, MenuItemInput, PublicData } from './types'
@@ -924,35 +924,14 @@ export function createDemoBackend(): Backend {
       })
     },
 
-    async createStaff(input) {
+    async changeOwnPassword(current, next) {
       await delay(300)
-      const me = requireOwner()
-      return mutate((s) => {
-        const email = toLoginEmail(input.login)
-        if (!/^[a-z0-9._%+-]{1,64}@[a-z0-9.-]{1,190}\.[a-z]{2,24}$/.test(email)) throw new AppError('invalid_login')
-        const name = cleanText(input.display_name)
-        if (!name || name.length > 60) throw new AppError('invalid', 'Enter a name.')
-        if (input.role !== 'owner' && input.role !== 'kitchen') throw new AppError('invalid_role')
-        if (input.password.length < 8 || input.password.length > 72) throw new AppError('weak_password')
-        if (s.accounts.some((a) => a.email === email)) throw new AppError('login_taken')
-        const user_id = uuid()
-        s.accounts.push({ email, password: input.password, user_id })
-        s.staff.push({ user_id, display_name: name, role: input.role, is_active: true, created_at: now(), email, last_sign_in_at: null })
-        audit(s, me.name, 'staff.created', 'staff', user_id, name, { display_name: [null, name], role: [null, input.role] })
-        return { user_id, email }
-      })
-    },
-
-    async resetStaffPassword(userId, password) {
-      await delay(300)
-      const me = requireOwner()
+      const me = requireStaff()
       mutate((s) => {
-        const account = s.accounts.find((a) => a.user_id === userId)
-        const member = s.staff.find((m) => m.user_id === userId)
-        if (!account || !member) throw new AppError('not_staff')
-        if (password.length < 8 || password.length > 72) throw new AppError('weak_password')
-        account.password = password
-        audit(s, me.name, 'staff.password_reset', 'staff', userId, member.display_name, {})
+        const account = s.accounts.find((a) => a.user_id === me.user_id)
+        if (!account || account.password !== current) throw new AppError('wrong_password')
+        if (next.length < 8 || next.length > 72) throw new AppError('weak_password')
+        account.password = next
       })
     },
 

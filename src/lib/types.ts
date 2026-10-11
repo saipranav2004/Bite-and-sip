@@ -138,14 +138,6 @@ export interface StaffMember {
   last_sign_in_at: string | null
 }
 
-export interface NewStaffInput {
-  /** A username ("ravi") or a full email address. */
-  login: string
-  display_name: string
-  role: StaffRole
-  password: string
-}
-
 /** A stock-tracked menu item. Items without a row are not tracked. */
 export interface StockLevel {
   menu_item_id: string

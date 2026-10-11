@@ -8,7 +8,8 @@ import { QrImage } from '../../components/QrImage'
 import { Banner, Button, Dialog, Spinner, Switch, useToast } from '../../components/ui'
 import { friendlyError } from '../../lib/errors'
 import { isValidUpiId, buildUpiLink } from '../../lib/upi'
-import { cleanText, normalizeTableLabel } from '../../lib/validation'
+import { cleanText, loginName, normalizeTableLabel } from '../../lib/validation'
+import { useStaffSession } from '../../state/staffSession'
 import { usePublicData } from '../../state/publicData'
 
 export function publicSiteUrl() {
@@ -23,18 +24,12 @@ export function SettingsPage() {
   return (
     <PageBody>
       <div className="mx-auto max-w-3xl">
-        <PageHeader title="Settings" subtitle="Café status, UPI payments and table QR codes." />
+        <PageHeader title="Settings" subtitle="Café status, UPI payments, table QR codes and your login." />
         <div className="space-y-4">
           <CafeStatus />
           <PaymentSettings />
           <TablesSettings />
-          <section className="card flex flex-wrap items-center justify-between gap-3 p-4 sm:p-5">
-            <div>
-              <h2 className="text-[15px] font-extrabold">Team & access</h2>
-              <p className="mt-0.5 text-[13px] text-muted">Add kitchen logins, reset passwords and remove access.</p>
-            </div>
-            <Link to="/staff/team" className="inline-flex min-h-9 items-center rounded-lg border border-field px-3 text-sm font-bold hover:bg-sunken">Open Team</Link>
-          </section>
+          <AccountSettings />
           {isDemo && <DemoReset />}
         </div>
       </div>
@@ -273,6 +268,68 @@ function TablesSettings() {
         ))}
       </ul>
       {tables.length === 0 && <p className="mt-3 text-sm text-muted">No tables yet. Students can still order using the counter QR.</p>}
+    </Section>
+  )
+}
+
+function AccountSettings() {
+  const { profile, signOut } = useStaffSession()
+  const toast = useToast()
+  const ids = { current: useId(), next: useId(), again: useId() }
+  const [current, setCurrent] = useState('')
+  const [next, setNext] = useState('')
+  const [again, setAgain] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function save(e: FormEvent) {
+    e.preventDefault()
+    if (next.length < 8) return setError('Use at least 8 characters for the new password.')
+    if (next !== again) return setError('The two new passwords don’t match.')
+    if (next === current) return setError('Choose a password different from the current one.')
+    setBusy(true)
+    setError(null)
+    try {
+      await backend.changeOwnPassword(current, next)
+      setCurrent('')
+      setNext('')
+      setAgain('')
+      toast('Password changed', 'success')
+    } catch (err) {
+      setError(friendlyError(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Section title="Your login" description="You run the café from this one account. Cooks don’t need a login.">
+      <dl className="mb-5 grid gap-3 text-sm sm:grid-cols-2">
+        <div><dt className="text-muted">Name</dt><dd className="font-semibold">{profile?.display_name}</dd></div>
+        <div><dt className="text-muted">Username</dt><dd className="font-mono font-semibold">{loginName(profile?.email ?? null)}</dd></div>
+      </dl>
+      <form onSubmit={save} className="space-y-3 border-t border-line pt-4" noValidate>
+        <h3 className="text-sm font-bold">Change password</h3>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div>
+            <label htmlFor={ids.current} className="label">Current password</label>
+            <input id={ids.current} type="password" autoComplete="current-password" className="field-input" value={current} onChange={(e) => setCurrent(e.target.value)} />
+          </div>
+          <div>
+            <label htmlFor={ids.next} className="label">New password</label>
+            <input id={ids.next} type="password" autoComplete="new-password" className="field-input" value={next} onChange={(e) => setNext(e.target.value)} />
+          </div>
+          <div>
+            <label htmlFor={ids.again} className="label">New password again</label>
+            <input id={ids.again} type="password" autoComplete="new-password" className="field-input" value={again} onChange={(e) => setAgain(e.target.value)} />
+          </div>
+        </div>
+        {error && <Banner tone="danger">{error}</Banner>}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Button type="submit" loading={busy} disabled={!current || !next || !again}>Change password</Button>
+          <Button variant="ghost" onClick={() => void signOut()}>Sign out</Button>
+        </div>
+      </form>
     </Section>
   )
 }

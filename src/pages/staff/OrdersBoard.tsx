@@ -5,7 +5,7 @@ import { IconBell, IconBellOff, IconPhone, IconPin, IconRefresh } from '../../co
 import { Banner, Button, Dialog, PaymentBadge, Spinner, StatusBadge, useToast } from '../../components/ui'
 import { Chime, useStaffOrders } from '../../hooks/useStaffOrders'
 import { friendlyError, toAppError } from '../../lib/errors'
-import { minutesSince, money, orderCode, timeOfDay } from '../../lib/format'
+import { cafeDayStartIso, minutesSince, money, orderCode, timeOfDay } from '../../lib/format'
 import { canMarkPaid, canRevertPayment, paymentDisplay } from '../../lib/orderRules'
 import { readJson, writeJson } from '../../lib/storage'
 import type { OrderStatus, StaffOrder } from '../../lib/types'
@@ -47,6 +47,20 @@ export function OrdersBoard() {
     [orders],
   )
   const toVerify = open.filter((o) => paymentDisplay(o) === 'upi_verifying').length
+  const { profile } = useStaffSession()
+  const isOwner = profile?.role === 'owner'
+  const today = useMemo(() => {
+    const start = cafeDayStartIso()
+    const live = (orders ?? []).filter((o) => o.created_at >= start && o.status !== 'cancelled')
+    return {
+      sales: live.reduce((n, o) => n + o.total, 0),
+      count: live.length,
+      cashDue: open.filter((o) => o.payment_method === 'cash' && o.payment_status === 'unpaid').reduce((n, o) => n + o.total, 0),
+      collected: live.filter((o) => o.payment_status === 'paid').reduce((n, o) => n + o.total, 0),
+    }
+  }, [orders, open])
+  const [soundNudgeHidden, setSoundNudgeHidden] = useState(() => readJson('bitesip-sound-nudge-hidden', false, 'session'))
+  const soundOn = soundWanted && soundReady
   const newCount = byStatus('placed').length
 
   useEffect(() => {
@@ -116,6 +130,39 @@ export function OrdersBoard() {
       />
       {error && <Banner tone="warning" className="mb-3">{error} Showing the last orders we loaded.</Banner>}
 
+      {isOwner && (
+        <p className="tabular -mt-2 mb-3 text-sm text-ink-2 sm:hidden" aria-label="Today so far">
+          Today <span className="font-extrabold text-ink">{money(today.sales)}</span> · {today.count} orders
+          {today.cashDue > 0 && <> · <span className="font-bold text-ink">{money(today.cashDue)}</span> cash to collect</>}
+        </p>
+      )}
+      {isOwner && (
+        <dl className="mb-4 hidden grid-cols-4 gap-px overflow-hidden rounded-[var(--radius-card)] border border-line bg-line sm:grid" aria-label="Today so far">
+          <TodayStat label="Sales today" value={money(today.sales)} />
+          <TodayStat label="Orders today" value={String(today.count)} />
+          <TodayStat label="Received" value={money(today.collected)} hint="Cash + confirmed UPI" />
+          <TodayStat label="Cash to collect" value={money(today.cashDue)} hint={today.cashDue ? 'From open orders' : 'Nothing pending'} />
+        </dl>
+      )}
+
+      {!soundOn && !soundNudgeHidden && (
+        <Banner
+          tone="warning"
+          className="mb-4"
+          title={soundWanted ? 'Tap once to turn the order sound back on' : 'Hear every new order'}
+          action={
+            <div className="flex gap-2">
+              <Button size="sm" variant="dark" onClick={() => void toggleSound()}><IconBell size={15} /> Turn on sound</Button>
+              {!soundWanted && (
+                <Button size="sm" variant="ghost" onClick={() => { setSoundNudgeHidden(true); writeJson('bitesip-sound-nudge-hidden', true, 'session') }}>Not now</Button>
+              )}
+            </div>
+          }
+        >
+          <span className="hidden sm:inline">{soundWanted ? 'Browsers need a tap after each visit before they can play sounds.' : 'A chime plays when an order comes in, so you don’t miss one while you’re away from the screen.'}</span>
+        </Banner>
+      )}
+
       {/* Phone / tablet: one column at a time */}
       <div className="grid grid-cols-3 gap-1 rounded-xl bg-surface p-1 ring-1 ring-line lg:hidden" role="tablist" aria-label="Order stages">
         {COLUMNS.map((c) => (
@@ -152,6 +199,16 @@ export function OrdersBoard() {
 
       <DoneToday orders={done} />
     </PageBody>
+  )
+}
+
+function TodayStat({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div className="bg-surface px-4 py-3">
+      <dt className="text-xs font-semibold text-muted">{label}</dt>
+      <dd className="tabular mt-0.5 text-xl font-extrabold tracking-tight">{value}</dd>
+      {hint && <dd className="text-[11px] text-subtle">{hint}</dd>}
+    </div>
   )
 }
 

@@ -117,13 +117,14 @@ export function Banner({
   }[tone]
   const Icon = tone === 'success' ? IconCheck : tone === 'info' ? IconInfo : IconAlert
   return (
-    <div role={tone === 'danger' ? 'alert' : undefined} className={`flex gap-3 rounded-2xl border p-3.5 text-sm ${style} ${className}`}>
+    <div role={tone === 'danger' ? 'alert' : undefined} className={`flex flex-wrap gap-x-3 gap-y-2.5 rounded-2xl border p-3.5 text-sm ${style} ${className}`}>
       <Icon size={18} className="mt-0.5 shrink-0" />
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1 basis-48">
         {title && <p className="font-bold">{title}</p>}
         {children && <div className={title ? 'mt-0.5' : ''}>{children}</div>}
       </div>
-      {action && <div className="shrink-0 self-center">{action}</div>}
+      {/* Beside the text when there's room; underneath it on narrow screens. */}
+      {action && <div className="shrink-0 self-center pl-[30px] sm:pl-0">{action}</div>}
     </div>
   )
 }
@@ -284,6 +285,7 @@ interface Toast {
   tone: 'default' | 'success' | 'error'
 }
 const ToastContext = createContext<(message: string, tone?: Toast['tone']) => void>(() => {})
+const ToastClearContext = createContext<() => void>(() => {})
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([])
@@ -294,7 +296,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), tone === 'error' ? 6000 : 3500)
   }, [])
   const value = useMemo(() => push, [push])
+  const clear = useCallback(() => setToasts((t) => (t.length ? t.filter((x) => x.tone === 'error') : t)), [])
   return (
+    <ToastClearContext.Provider value={clear}>
     <ToastContext.Provider value={value}>
       {children}
       <div aria-live="polite" aria-atomic="false" className="pointer-events-none fixed inset-x-0 bottom-24 z-[60] flex flex-col items-center gap-2 px-4 sm:top-3 sm:bottom-auto">
@@ -313,7 +317,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         ))}
       </div>
     </ToastContext.Provider>
+    </ToastClearContext.Provider>
   )
+}
+
+/** Drops confirmation toasts when the page changes, so they never cover the next screen. Errors stay. */
+export function useClearToastsOn(key: string) {
+  const clear = useContext(ToastClearContext)
+  useEffect(() => clear(), [key, clear])
 }
 
 export const useToast = () => useContext(ToastContext)

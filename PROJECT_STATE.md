@@ -28,9 +28,8 @@ _Last updated: 11 Oct 2026 (IST)._
   - inventory for batch items: automatic deduction, return on cancel, sold out at zero, received / waste / recount / correction, history, low-stock badge
   - expenses by category; profit & loss (gross, net, margins, prime cost, previous period, per-item profit, CSV) with one food-cost method at a time so ingredients are never counted twice
   - append-only audit log written by database triggers (prices, costs, stock, payments, cancellations, staff, settings, expenses)
-  - Team page: create logins by username, reset passwords, remove access (Edge Function `staff-admin`, owner-checked)
   - staff console redesign: sidebar / icon rail / bottom tabs, page headers, period picker, KPI cards with deltas, data tables, drawers
-  - kept the kitchen role: helpers never see profit, prices or the UPI ID, and the audit log names who did what; an owner can still run everything alone
+  - single-operator console: the owner handles orders, payments and everything else from one login (cooks don't use the site); one-tap open/close in the header, today's takings on the board, sound prompt, own password change in Settings
 
 ## Key decisions
 Counter pickup only · statuses `placed→preparing→ready→completed` + `cancelled` · payment `unpaid/paid` kept separate, with UPI "customer says paid" shown as a claim only · completion requires paid · paid→unpaid owner-only · device-generated 256-bit order secret (hash stored) for anonymous access · prices computed only in SQL · max 3 open orders per phone · IST business day · black = identity, yellow = action.

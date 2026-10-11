@@ -195,7 +195,7 @@ test('pages fit the screen and pass automated accessibility checks', async ({ pa
     expect(results.violations.map((v) => `${path}: ${v.id} (${v.nodes.length})`)).toEqual([])
   }
   await signIn(page, OWNER)
-  for (const path of ['/staff', '/staff/menu', '/staff/inventory', '/staff/reports', '/staff/profit', '/staff/expenses', '/staff/team', '/staff/audit', '/staff/settings']) {
+  for (const path of ['/staff', '/staff/menu', '/staff/inventory', '/staff/reports', '/staff/profit', '/staff/expenses', '/staff/audit', '/staff/settings']) {
     await page.goto(path)
     await page.waitForLoadState('networkidle')
     await expectNoHorizontalOverflow(page)
