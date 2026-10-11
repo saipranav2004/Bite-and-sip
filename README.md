@@ -1,0 +1,104 @@
+# Bite & Sip — College Café Ordering
+
+Students scan a table QR, order from their phone, pay cash or UPI, and get told when to collect at the counter. Kitchen staff work a live orders board. The owner manages the menu, café status, UPI ID, table QR codes and daily reports.
+
+**Stack:** React 19 · Vite · Tailwind CSS v4 · Supabase (Postgres, Auth, Realtime, Storage) · Vercel.
+
+## Features
+- **Students (no sign-up):**
+  - QR table entry with a brand intro
+  - menu with real photos, search, categories and add-ons
+  - one-page checkout (name + mobile), cash or UPI (QR + deep link)
+  - live order tracking, self-cancel before preparation, "My orders" on the device
+- **Kitchen:**
+  - live board (New → Preparing → Ready) with a sound alert and ticket timers
+  - UPI payment checks, cash collection at handover, cancellations with reasons
+  - sold-out switches
+- **Owner:**
+  - menu editing (photos, prices, add-ons, categories)
+  - café open/closed, UPI ID with ₹1 test QR, tables and printable QR codes, staff access
+  - reports that reconcile cash, confirmed UPI and unpaid amounts; CSV export
+- **Security:**
+  - prices calculated in the database
+  - Row Level Security on every table
+  - per-order device secrets for anonymous tracking
+  - order and payment state machine enforced by triggers
+  - only staff can mark orders paid
+
+## Try it in 30 seconds (no accounts)
+```bash
+git clone https://github.com/saipranav2004/Bite-and-sip.git
+cd Bite-and-sip
+npm install
+npm run dev:demo
+```
+- Student: <http://localhost:5173/t/T12>
+- Staff: <http://localhost:5173/staff>. The demo accounts are shown on the login page.
+
+Demo mode keeps data in the browser and is labelled on every screen.
+
+## Run with a local Supabase (needs Docker)
+```bash
+npx supabase start            # applies supabase/migrations and supabase/seed.sql
+npx supabase status           # copy API URL + publishable key into .env.local (see .env.example)
+SUPABASE_URL=http://127.0.0.1:54321 SUPABASE_SECRET_KEY=<local secret key> \
+  node scripts/create-staff.mjs --email owner@example.com --name "Owner" --role owner --password '<password>'
+npm run dev
+```
+
+## Deploy
+### Supabase
+1. Create a project (Mumbai region recommended).
+2. Push the schema:
+   ```bash
+   npx supabase login
+   npx supabase link --project-ref <ref>
+   npx supabase db push
+   ```
+3. Optional: run `supabase/seed.sql` in the SQL editor for the starter menu. Then set your real UPI ID in Settings.
+4. Authentication: turn **off** "Allow new users to sign up" and set the Site URL to your Vercel URL.
+5. Create staff accounts from your computer. The secret key never goes into Vercel or git.
+   ```bash
+   SUPABASE_URL=https://<ref>.supabase.co SUPABASE_SECRET_KEY=<secret> \
+     node scripts/create-staff.mjs --email you@example.com --name "Your name" --role owner
+   ```
+
+### Vercel
+1. **Add New → Project →** import `saipranav2004/Bite-and-sip` (default settings; `vercel.json` handles routing and security headers).
+2. Add the environment variables `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`, then deploy. Without them the site runs in demo mode.
+3. Sign in at `/staff/login`. Set the UPI ID and test it with ₹1, then print the table QR codes from Settings.
+
+### Go-live checklist
+- Only the publishable key is in Vercel. No secret key anywhere in the repo or browser.
+- Public sign-up is off. Only real staff have accounts.
+- A real UPI ID is set and tested on a phone.
+- QR codes are printed from the final domain.
+
+## Scripts
+| Command | Does |
+|---|---|
+| `npm run dev` / `dev:demo` | Dev server (Supabase from `.env.local` / in-browser demo) |
+| `npm run check` | Lint, typecheck, unit + component tests, build |
+| `npm run test:db` | Database security tests against local Supabase |
+| `npm run test:e2e` / `test:e2e:supabase` | Playwright journeys (demo / local Supabase) |
+| `npm run staff:create -- --email … --name … --role owner\|kitchen` | Create or update a staff account |
+| `npm run seed:generate` | Regenerate `supabase/seed.sql` from `src/data/catalog.json` |
+| `npm run seed:sample-history` | Local only: add a week of sample orders for reports |
+
+## Photo credits
+Menu photos are openly licensed (CC0, CC BY, CC BY-SA). They are cropped and resized, and credited on the in-app **Photo credits** page (`/credits`, data in `src/data/photoCredits.json`).
+
+## Project layout
+```
+src/
+  backend/      Backend interface + Supabase and demo implementations
+  components/   UI kit, icons, food art, QR, intro, celebrations
+  data/         Menu catalog and photo credits
+  hooks/        Live order tracking (student) and live board (staff)
+  lib/          Pricing, order rules, UPI, validation, reports, images, motion
+  pages/        student/ and staff/ screens
+  state/        Cart, device secrets, menu data, staff session
+supabase/       config, migrations (schema + security), seed
+scripts/        staff accounts, seeds, walkthrough video tooling
+tests/          db/ (security, local Supabase) and e2e/ (Playwright)
+```
