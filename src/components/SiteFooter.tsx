@@ -33,7 +33,6 @@ export function SiteFooter() {
           <Wordmark onDark className="text-lg" />
           <nav aria-label="Footer" className="flex flex-wrap gap-x-5 gap-y-2 text-sm font-semibold text-white/75">
             <Link to="/orders" viewTransition className="hover:text-white">My orders</Link>
-            <Link to="/credits" viewTransition className="hover:text-white">Photo credits</Link>
             <Link to="/staff/login" className="hover:text-white">Staff login</Link>
           </nav>
         </div>

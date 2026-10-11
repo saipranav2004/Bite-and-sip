@@ -16,7 +16,7 @@ _Last updated: 11 Oct 2026 (IST)._
 - Vercel config with SPA rewrites and security headers (CSP verified in a browser).
 - **Iteration 2:**
   - brand intro from the café logo (once per session, skippable, reduced-motion aware, doubles as the loader)
-  - 14 real, licence-checked food photos with credits page
+  - 14 real food photos
   - view transitions, staggered reveals, fly-to-cart, order-placed and ready celebrations, kitchen new-order highlight
   - "How it works" footer
   - fixes: toasts blocking taps, nested link/button

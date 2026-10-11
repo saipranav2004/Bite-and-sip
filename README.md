@@ -85,15 +85,12 @@ npm run dev
 | `npm run seed:generate` | Regenerate `supabase/seed.sql` from `src/data/catalog.json` |
 | `npm run seed:sample-history` | Local only: add a week of sample orders for reports |
 
-## Photo credits
-Menu photos are openly licensed (CC0, CC BY, CC BY-SA). They are cropped and resized, and credited on the in-app **Photo credits** page (`/credits`, data in `src/data/photoCredits.json`).
-
 ## Project layout
 ```
 src/
   backend/      Backend interface + Supabase and demo implementations
   components/   UI kit, icons, food art, QR, intro, celebrations
-  data/         Menu catalog and photo credits
+  data/         Menu catalog
   hooks/        Live order tracking (student) and live board (staff)
   lib/          Pricing, order rules, UPI, validation, reports, images, motion
   pages/        student/ and staff/ screens

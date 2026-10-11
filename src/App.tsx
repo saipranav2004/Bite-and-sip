@@ -12,7 +12,6 @@ import { SettingsPage } from './pages/staff/SettingsPage'
 import { RequireStaff, StaffLayout } from './pages/staff/StaffLayout'
 import { CartPage } from './pages/student/CartPage'
 import { MenuPage } from './pages/student/MenuPage'
-import { CreditsPage } from './pages/student/CreditsPage'
 import { MyOrdersPage } from './pages/student/MyOrdersPage'
 import { OrderPage } from './pages/student/OrderPage'
 import { TableEntry } from './pages/student/TableEntry'
@@ -28,7 +27,6 @@ export function AppRoutes() {
       <Route path="/cart" element={<CartPage />} />
       <Route path="/order/:id" element={<OrderPage />} />
       <Route path="/orders" element={<MyOrdersPage />} />
-      <Route path="/credits" element={<CreditsPage />} />
 
       <Route path="/staff/login" element={<LoginPage />} />
       <Route path="/staff/print-qr" element={<RequireStaff ownerOnly><PrintQrPage /></RequireStaff>} />
