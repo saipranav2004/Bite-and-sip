@@ -9,7 +9,7 @@ import { Banner, Button, Dialog, EmptyState, PaymentBadge, Spinner, useToast } f
 import { useOrderTracking } from '../../hooks/useOrderTracking'
 import { friendlyError } from '../../lib/errors'
 import { money, orderCode, timeOfDay } from '../../lib/format'
-import { canCustomerCancel, paymentDisplay, STATUS_MESSAGE, STUDENT_STEPS } from '../../lib/orderRules'
+import { canCustomerCancel, paymentDisplay, statusMessage, studentSteps } from '../../lib/orderRules'
 import type { CustomerOrder } from '../../lib/types'
 import { buildUpiLink } from '../../lib/upi'
 import { tokenFor } from '../../state/device'
@@ -82,7 +82,7 @@ export function OrderPage() {
     )
   }
 
-  const msg = STATUS_MESSAGE[order.status]
+  const msg = statusMessage(order.status, order.table_label)
   const code = orderCode(order.order_no)
 
   return (
@@ -110,7 +110,7 @@ export function OrderPage() {
             <p className="tabular mt-1 text-5xl font-extrabold tracking-tight">{code}</p>
             <p className="mt-1 text-sm font-semibold text-ink-2">
               {order.customer_name}
-              {order.table_label && <> · Table {order.table_label}</>}
+              {order.table_label ? <> · Table {order.table_label}</> : <> · Pickup at the counter</>}
             </p>
             <h2 className={`mt-4 text-2xl font-extrabold ${order.status === 'cancelled' ? 'text-danger' : ''}`}>{msg.title}</h2>
             <p className="mt-1 text-[15px] text-ink-2">
@@ -158,13 +158,14 @@ export function OrderPage() {
 }
 
 function Steps({ order }: { order: CustomerOrder }) {
-  const idx = STUDENT_STEPS.findIndex((s) => s.status === order.status)
+  const steps = studentSteps(order.table_label)
+  const idx = steps.findIndex((s) => s.status === order.status)
   const times: Record<string, string | null> = {
     placed: order.created_at, preparing: order.preparing_at, ready: order.ready_at, completed: order.completed_at,
   }
   return (
     <ol className="grid grid-cols-4 border-t border-ink/10 bg-surface/60 px-2 py-3">
-      {STUDENT_STEPS.map((s, i) => {
+      {steps.map((s, i) => {
         const done = i <= idx
         const current = i === idx
         return (
@@ -237,7 +238,11 @@ function PaymentCard({ order, onUpdated }: { order: CustomerOrder; onUpdated: (o
 
       {display === 'cash_due' && (
         <p className="mt-2 text-[15px]">
-          Pay <strong className="tabular">{money(order.total)}</strong> in cash at the counter when you collect your order.
+          {order.table_label ? (
+            <>Pay <strong className="tabular">{money(order.total)}</strong> in cash when we bring your food to Table {order.table_label}.</>
+          ) : (
+            <>Pay <strong className="tabular">{money(order.total)}</strong> in cash at the counter when you collect your order.</>
+          )}
         </p>
       )}
 

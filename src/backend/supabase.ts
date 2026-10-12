@@ -3,7 +3,7 @@ import { AppError, toAppError } from '../lib/errors'
 import { bundledImage, isBundledImage } from '../lib/images'
 import { cafeDayStartIso, addDays } from '../lib/format'
 import type {
-  AuditEntry, CafeSettings, CafeTable, Category, Costs, CustomerOrder, Expense, MenuItem, PlaceOrderInput,
+  AuditEntry, CafeSettings, CafeTable, Category, Costs, CustomerOrder, Expense, Ingredient, IngredientMovement, MenuItem, PlaceOrderInput, Recipes,
   ProfitAndLossData, SalesSummary, StaffMember, StaffOrder, StaffProfile, StockLevel, StockMovement,
 } from '../lib/types'
 import type { Backend, LiveStatus, MenuItemInput, PublicData, StatusChange } from './types'
@@ -17,6 +17,17 @@ const ORDER_COLUMNS =
 const IMAGE_BUCKET = 'menu-images'
 const EXPENSE_COLUMNS = 'id, spent_on, category, amount, note, created_at, updated_at'
 const STOCK_COLUMNS = 'menu_item_id, on_hand, low_at, updated_at'
+const INGREDIENT_COLUMNS = 'id, name, base_unit, display_unit, on_hand, low_at, cost_per_unit, is_active, updated_at'
+
+/** Postgres numeric may arrive as a string; the app always works with numbers. */
+function toIngredient(r: Record<string, unknown>): Ingredient {
+  return {
+    ...(r as unknown as Ingredient),
+    on_hand: Number(r.on_hand),
+    low_at: Number(r.low_at),
+    cost_per_unit: r.cost_per_unit === null || r.cost_per_unit === undefined ? null : Number(r.cost_per_unit),
+  }
+}
 
 function unwrap<T>(res: { data: T; error: unknown }): T {
   if (res.error) throw toAppError(res.error)
@@ -372,6 +383,51 @@ export function createSupabaseBackend(url: string, key: string): Backend {
         .limit(limit)
       if (menuItemId) q = q.eq('menu_item_id', menuItemId)
       return unwrap(await q) as StockMovement[]
+    },
+
+    async listIngredients() {
+      const res = await sb.from('ingredients').select(INGREDIENT_COLUMNS).eq('is_active', true).order('name')
+      return (unwrap(res) as Record<string, unknown>[]).map(toIngredient)
+    },
+
+    async saveIngredient(input) {
+      return toIngredient(unwrap(await sb.rpc('ingredient_save', { p: input })) as Record<string, unknown>)
+    },
+
+    async archiveIngredient(id) {
+      unwrap(await sb.rpc('ingredient_archive', { p_id: id }))
+    },
+
+    async adjustIngredient(id, kind, quantity, extra = {}) {
+      const row = unwrap(
+        await sb.rpc('ingredient_adjust', {
+          p_id: id, p_kind: kind, p_quantity: quantity, p_amount: extra.amount ?? null, p_note: extra.note ?? null,
+          p_add_expense: extra.addExpense ?? false, p_label: extra.label ?? null,
+        }),
+      ) as Record<string, unknown>
+      return toIngredient(row)
+    },
+
+    async listIngredientMovements(id, limit = 200) {
+      let q = sb
+        .from('ingredient_movements')
+        .select('id, ingredient_id, ingredient_name, kind, delta, on_hand_after, unit_cost, amount, order_id, note, actor_name, created_at')
+        .order('id', { ascending: false })
+        .limit(limit)
+      if (id) q = q.eq('ingredient_id', id)
+      return (unwrap(await q) as Record<string, unknown>[]).map((r) => ({
+        ...(r as unknown as IngredientMovement),
+        delta: Number(r.delta),
+        on_hand_after: Number(r.on_hand_after),
+        unit_cost: r.unit_cost === null ? null : Number(r.unit_cost),
+      }))
+    },
+
+    async getRecipes() {
+      const rows = unwrap(await sb.from('recipe_lines').select('menu_item_id, ingredient_id, quantity')) as { menu_item_id: string; ingredient_id: string; quantity: number | string }[]
+      const out: Recipes = {}
+      for (const r of rows) (out[r.menu_item_id] ??= []).push({ ingredient_id: r.ingredient_id, quantity: Number(r.quantity) })
+      return out
     },
 
     async listAudit({ fromDay, toDay, beforeId, limit = 100 }) {

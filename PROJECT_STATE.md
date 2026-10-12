@@ -31,6 +31,11 @@ _Last updated: 11 Oct 2026 (IST)._
   - staff console redesign: sidebar / icon rail / bottom tabs, page headers, period picker, KPI cards with deltas, data tables, drawers
   - single-operator console: the owner handles orders, payments and everything else from one login (cooks don't use the site); one-tap open/close in the header, today's takings on the board, sound prompt, own password change in Settings
 
+- **Iteration 4:**
+  - raw materials with free-text names and unit dropdowns (stored in base units g/ml/pcs/packet), purchases that can post to Expenses, usage/waste/counts, history
+  - optional recipes per menu item: automatic deduction on sale (one statement-level trigger per order, rows locked in id order), returned on cancel, never blocks ordering; recipe cost → "Use as cost"
+  - table service: table QR orders are served at the table (big table label on the board, "Served at T5"), counter QR orders are collected
+
 ## Key decisions
 Counter pickup only · statuses `placed→preparing→ready→completed` + `cancelled` · payment `unpaid/paid` kept separate, with UPI "customer says paid" shown as a claim only · completion requires paid · paid→unpaid owner-only · device-generated 256-bit order secret (hash stored) for anonymous access · prices computed only in SQL · max 3 open orders per phone · IST business day · black = identity, yellow = action.
 
@@ -39,10 +44,10 @@ Counter pickup only · statuses `placed→preparing→ready→completed` + `canc
 |---|---|
 | Lint | 0 errors (style warnings only) |
 | Typecheck, build | pass |
-| Unit + component | 36/36 |
-| DB/security/business rules on local Supabase (incl. Edge Function) | 78/78 |
-| E2E demo (phone + desktop) | 26/26 |
-| E2E local Supabase (phone + desktop) | 26/26 |
+| Unit + component | 39/39 |
+| DB/security/business rules on local Supabase | 87/87 |
+| E2E demo (phone + desktop) | 30/30 |
+| E2E local Supabase (phone + desktop) | 30/30 |
 
 ## Outstanding
 1. Set a real UPI ID in Settings and test with ₹1 on a real phone.

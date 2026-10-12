@@ -21,6 +21,7 @@ test('stock: owner tracks an item, a student order sells it out, staff restock i
   const owner = await staffPage(browser, page)
   await signIn(owner, OWNER)
   await owner.goto('/staff/inventory')
+  await owner.getByRole('tab', { name: 'Ready-made items' }).click()
   await owner.getByRole('button', { name: 'Track an item' }).first().click()
   const setup = owner.getByRole('dialog')
   await setup.getByLabel('Item').selectOption({ label: ITEM })
@@ -74,6 +75,7 @@ test('stock: owner tracks an item, a student order sells it out, staff restock i
   } finally {
     await signIn(owner, OWNER)
     await owner.goto('/staff/inventory')
+    await owner.getByRole('tab', { name: 'Ready-made items' }).click()
     await owner.getByRole('button', { name: `Stock settings for ${ITEM}` }).first().click()
     const settings = owner.getByRole('dialog')
     await settings.getByRole('button', { name: 'Stop tracking' }).click()
@@ -165,4 +167,80 @@ test('owner opens and closes the café from the header in one place', async ({ p
   await page.getByRole('button', { name: /Café is closed/ }).click()
   await expect(page.getByText('Open — taking orders')).toBeVisible()
   await expect(page.getByRole('button', { name: /Café is open/ })).toBeVisible()
+})
+
+test('raw materials: add milk, buy some, use it in a recipe, and sales use it up', async ({ page, browser }) => {
+  const milk = `Milk E2E ${Date.now() % 100000}`
+  const owner = await staffPage(browser, page)
+  await signIn(owner, OWNER)
+  await owner.goto('/staff/inventory')
+  await expect(owner.getByRole('tab', { name: 'Raw materials' })).toHaveAttribute('aria-selected', 'true')
+  await owner.getByRole('button', { name: 'Add ingredient' }).first().click()
+  const add = owner.getByRole('dialog')
+  await add.getByLabel('Name').fill(milk)
+  await add.getByLabel('Measured in').selectOption('L')
+  await add.getByLabel('In stock right now', { exact: true }).fill('2')
+  await add.getByLabel('Warn me when it drops to', { exact: true }).fill('1')
+  await add.getByRole('button', { name: 'Add raw material' }).click()
+  await expect(owner.getByText(`${milk} added`)).toBeVisible()
+
+  await owner.getByRole('button', { name: `Record stock for ${milk}` }).first().click()
+  const rec = owner.getByRole('dialog')
+  await rec.getByText('Bought', { exact: true }).click()
+  await rec.getByLabel('Quantity bought', { exact: true }).fill('3')
+  await rec.getByLabel(/Price paid/).fill('180')
+  await expect(rec.getByText('Works out to ₹60 / L.')).toBeVisible()
+  await rec.getByRole('button', { name: 'Save purchase' }).click()
+  await expect(owner.getByText(`${milk}: 5 L in stock`)).toBeVisible()
+
+  const chai = 'Masala Chai'
+  try {
+    await owner.goto('/staff/menu')
+    await owner.getByRole('button', { name: `Edit ${chai}` }).click()
+    const ed = owner.getByRole('dialog')
+    await ed.getByRole('button', { name: 'Raw material' }).click()
+    const n = await ed.getByLabel(/^Recipe line \d+ raw material$/).count()
+    await ed.getByLabel(`Recipe line ${n} raw material`).selectOption({ label: milk })
+    await ed.getByLabel(`Recipe line ${n} quantity`).fill('100')
+    await ed.getByLabel(`Recipe line ${n} unit`).selectOption('ml')
+    await expect(ed.getByText(/Ingredients cost about/)).toBeVisible()
+    await ed.getByRole('button', { name: 'Save' }).click()
+    await expect(owner.getByText(`${chai} updated`)).toBeVisible()
+
+    // A student buys two chais.
+    await page.goto('/')
+    await page.getByRole('button', { name: `Add ${chai}` }).click()
+    await page.getByRole('button', { name: `Increase ${chai}` }).click()
+    await page.getByRole('button', { name: /View cart/ }).click()
+    await page.getByLabel('Name').fill('Recipe Tester')
+    await page.getByLabel('Mobile number').fill(uniquePhone())
+    await page.getByLabel(/Cash at the counter/).check()
+    await page.getByRole('button', { name: /Place order · ₹30/ }).click()
+    await expect(page.getByText('Order received')).toBeVisible()
+
+    // 5 L − 2 × 100 ml = 4.8 L
+    await owner.goto('/staff/inventory')
+    await expect(owner.getByText('4.8 L').filter({ visible: true }).first()).toBeVisible()
+    await owner.getByRole('button', { name: `History for ${milk}` }).first().click()
+    await expect(owner.getByRole('dialog').getByText('Used for an order')).toBeVisible()
+    await owner.keyboard.press('Escape')
+  } finally {
+    await owner.goto('/staff/menu')
+    await owner.getByRole('button', { name: `Edit ${chai}` }).click()
+    const ed = owner.getByRole('dialog')
+    const lines = ed.getByLabel(/^Recipe line \d+ raw material$/)
+    const count = await lines.count()
+    for (let i = count; i >= 1; i--) {
+      if ((await ed.getByLabel(`Recipe line ${i} raw material`).locator('option:checked').textContent()) === milk) {
+        await ed.getByRole('button', { name: `Remove recipe line ${i}` }).click()
+      }
+    }
+    await ed.getByRole('button', { name: 'Save' }).click()
+    await expect(owner.getByText(`${chai} updated`)).toBeVisible()
+    await owner.goto('/staff/inventory')
+    await owner.getByRole('button', { name: `Edit ${milk}` }).first().click()
+    await owner.getByRole('dialog').getByRole('button', { name: 'Remove raw material' }).click()
+    await owner.getByRole('dialog').getByRole('button', { name: `Remove ${milk}` }).click()
+    await expect(owner.getByText(`${milk} removed`)).toBeVisible()
+  }
 })

@@ -54,12 +54,26 @@ const GROUPS: { label: string; items: NavEntry[] }[] = [
   },
 ]
 
-/** Tracked items at or below their low-stock level. */
-function useLowStockCount() {
+/** Ready-made items and (for the owner) raw materials at or below their warning level. */
+function useLowStockCount(owner: boolean) {
   const { data } = usePublicData()
-  if (!data) return 0
+  const location = useLocation()
+  const [rawLow, setRawLow] = useState(0)
+  useEffect(() => {
+    if (!owner) return
+    let alive = true
+    backend.listIngredients().then(
+      (list) => alive && setRawLow(list.filter((i) => i.on_hand <= i.low_at).length),
+      () => undefined,
+    )
+    return () => {
+      alive = false
+    }
+    // Re-checked on every page change, so recording a purchase clears the badge.
+  }, [owner, location.pathname])
+  if (!data) return rawLow
   const live = new Set(data.menu.items.map((i) => i.id))
-  return data.stock.filter((s) => live.has(s.menu_item_id) && s.on_hand <= s.low_at).length
+  return rawLow + data.stock.filter((s) => live.has(s.menu_item_id) && s.on_hand <= s.low_at).length
 }
 
 export function StaffLayout() {
@@ -68,7 +82,7 @@ export function StaffLayout() {
   const location = useLocation()
   const [moreOpen, setMoreOpen] = useState(false)
   const [signingOut, setSigningOut] = useState(false)
-  const lowStock = useLowStockCount()
+  const lowStock = useLowStockCount(profile?.role === 'owner')
 
   useEffect(() => setMoreOpen(false), [location.pathname])
 

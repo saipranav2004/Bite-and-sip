@@ -12,7 +12,7 @@ import { MAX_LINES, MAX_QTY_PER_LINE, MAX_UNITS } from '../lib/pricing'
 import { summarize } from '../lib/reports'
 import { readJson, writeJson } from '../lib/storage'
 import type {
-  AuditEntry, CafeSettings, CafeTable, Category, Costs, CustomerOrder, Expense, ExpenseInput, MenuItem, OrderLine,
+  AuditEntry, Ingredient, IngredientMovement, Recipes, CafeSettings, CafeTable, Category, Costs, CustomerOrder, Expense, ExpenseInput, MenuItem, OrderLine,
   PaymentMethod, PlaceOrderInput, StaffMember, StaffOrder, StaffProfile, StaffRole, StockLevel, StockMovement,
 } from '../lib/types'
 import { cleanText, normalizePhone, normalizeTableLabel } from '../lib/validation'
@@ -20,7 +20,7 @@ import { isValidUpiId } from '../lib/upi'
 import { bundledImage, isBundledImage } from '../lib/images'
 import type { Backend, LiveStatus, MenuItemInput, PublicData } from './types'
 
-const STORE_KEY = 'bitesip-demo-v3'
+const STORE_KEY = 'bitesip-demo-v4'
 const SESSION_KEY = 'bitesip-demo-session'
 
 export const DEMO_ACCOUNTS = [
@@ -51,7 +51,7 @@ interface DemoAccount {
 }
 
 interface Store {
-  version: 3
+  version: 4
   settings: CafeSettings
   categories: Category[]
   items: MenuItem[]
@@ -66,6 +66,9 @@ interface Store {
   expenses: Expense[]
   audit: AuditEntry[]
   nextId: number
+  ingredients: Ingredient[]
+  ingredientMoves: IngredientMovement[]
+  recipes: Recipes
 }
 
 const delay = (ms = 120) => new Promise((r) => setTimeout(r, ms))
@@ -274,14 +277,64 @@ function seedBusiness(items: MenuItem[], costs: Costs) {
   return { stock, movements, expenses, audit, nextId: Math.max(audit.length, ...movements.map((m) => m.id)) + 1 }
 }
 
+/** Sample raw materials and recipes (quantities in g / ml / pieces / packets). */
+function seedIngredients(items: MenuItem[], nextId: number) {
+  const today = cafeDate()
+  const at = (day: string, hour: number) => new Date(new Date(cafeDayStartIso(day)).getTime() + hour * 3600000).toISOString()
+  const list: [string, Ingredient['base_unit'], Ingredient['display_unit'], number, number, number][] = [
+    ['Milk', 'ml', 'L', 8000, 3000, 0.06],
+    ['Tea powder', 'g', 'g', 600, 200, 0.5],
+    ['Sugar', 'g', 'kg', 4500, 1000, 0.045],
+    ['Coffee powder', 'g', 'g', 350, 150, 0.9],
+    ['Maggi', 'packet', 'packet', 14, 10, 14],
+    ['Bread', 'packet', 'packet', 3, 2, 40],
+    ['Eggs', 'pcs', 'dozen', 22, 12, 6],
+    ['Maida', 'g', 'kg', 2500, 2000, 0.042],
+    ['Oil', 'ml', 'L', 1800, 1000, 0.15],
+    ['Potato', 'g', 'kg', 4000, 2000, 0.03],
+    ['Paneer', 'g', 'g', 400, 500, 0.4],
+  ]
+  let id = nextId
+  const ingredients: Ingredient[] = list.map(([name, base_unit, display_unit, on_hand, low_at, cost]) => ({
+    id: uuid(), name, base_unit, display_unit, on_hand, low_at, cost_per_unit: cost, is_active: true, updated_at: at(today, 9),
+  }))
+  const ing = (n: string) => ingredients.find((i) => i.name === n)!
+  const moves: IngredientMovement[] = []
+  for (const i of ingredients) {
+    const bought = i.base_unit === 'packet' ? 20 : i.base_unit === 'pcs' ? 60 : i.on_hand * 2
+    moves.push({ id: id++, ingredient_id: i.id, ingredient_name: i.name, kind: 'opening', delta: 0, on_hand_after: 0, unit_cost: null, amount: null, order_id: null, note: null, actor_name: 'Asha (Owner)', created_at: at(addDays(today, -6), 8) })
+    moves.push({ id: id++, ingredient_id: i.id, ingredient_name: i.name, kind: 'purchase', delta: bought, on_hand_after: bought, unit_cost: i.cost_per_unit, amount: Math.round(bought * (i.cost_per_unit ?? 0)), order_id: null, note: null, actor_name: 'Asha (Owner)', created_at: at(addDays(today, -6), 8.2) })
+    moves.push({ id: id++, ingredient_id: i.id, ingredient_name: i.name, kind: 'count', delta: i.on_hand - bought, on_hand_after: i.on_hand, unit_cost: null, amount: null, order_id: null, note: 'Morning count', actor_name: 'Asha (Owner)', created_at: at(today, 8.5) })
+  }
+  moves.push({ id: id++, ingredient_id: ing('Milk').id, ingredient_name: 'Milk', kind: 'waste', delta: -500, on_hand_after: 8000, unit_cost: 0.06, amount: null, order_id: null, note: 'Spoiled', actor_name: 'Asha (Owner)', created_at: at(addDays(today, -2), 19) })
+  const byName = (n: string) => items.find((i) => i.name === n)
+  const recipe: [string, [string, number][]][] = [
+    ['Masala Chai', [['Milk', 100], ['Tea powder', 4], ['Sugar', 10]]],
+    ['Filter Coffee', [['Milk', 120], ['Coffee powder', 8], ['Sugar', 8]]],
+    ['Cold Coffee', [['Milk', 200], ['Coffee powder', 6], ['Sugar', 15]]],
+    ['College Special Maggi', [['Maggi', 1]]],
+    ['Maggi + Chai Combo', [['Maggi', 1], ['Milk', 100], ['Tea powder', 4], ['Sugar', 10]]],
+    ['Bread Omelette', [['Eggs', 2], ['Bread', 0.25]]],
+    ['Crispy Samosa', [['Maida', 60], ['Potato', 80], ['Oil', 30]]],
+    ['Paneer Wrap', [['Paneer', 60], ['Maida', 50], ['Oil', 10]]],
+  ]
+  const recipes: Recipes = {}
+  for (const [item, lines] of recipe) {
+    const m = byName(item)
+    if (m) recipes[m.id] = lines.map(([n, q]) => ({ ingredient_id: ing(n).id, quantity: q }))
+  }
+  return { ingredients, ingredientMoves: moves, recipes, nextId: id }
+}
+
 function freshStore(): Store {
   const menu = seedMenu()
   const costs = seedCosts(menu.items)
   const { orders, next } = seedOrders(menu.items, costs)
   const business = seedBusiness(menu.items, costs)
+  const raw = seedIngredients(menu.items, business.nextId)
   const created = new Date(Date.now() - 30 * 86400000).toISOString()
   return {
-    version: 3,
+    version: 4,
     settings: { ...catalog.settings, updated_at: now() },
     categories: menu.categories,
     items: menu.items,
@@ -294,12 +347,13 @@ function freshStore(): Store {
     nextOrderNo: next,
     costs,
     ...business,
+    ...raw,
   }
 }
 
 function load(): Store {
   const s = readJson<Store | null>(STORE_KEY, null)
-  if (s && s.version === 3) return s
+  if (s && s.version === 4) return s
   const fresh = freshStore()
   writeJson(STORE_KEY, fresh)
   return fresh
@@ -402,8 +456,38 @@ function audit(s: Store, actorName: string, action: string, entity: string, enti
 
 const orderLabel = (o: StaffOrder) => `Order BS-${o.order_no} · ₹${o.total} ${o.payment_method.toUpperCase()}`
 
-/** Puts an order's tracked items back on the shelf when it is cancelled. */
+/** Deducts recipe ingredients for an order (never blocks: stock may go below zero). */
+function useIngredients(s: Store, o: DemoOrder, lines: { menu_item_id: string; quantity: number }[]) {
+  const need = new Map<string, number>()
+  for (const l of lines) for (const r of s.recipes[l.menu_item_id] ?? []) need.set(r.ingredient_id, (need.get(r.ingredient_id) ?? 0) + r.quantity * l.quantity)
+  for (const [id, qty] of need) {
+    const ing = s.ingredients.find((i) => i.id === id && i.is_active)
+    if (!ing) continue
+    ing.on_hand = Math.round((ing.on_hand - qty) * 1000) / 1000
+    ing.updated_at = o.created_at
+    s.ingredientMoves.push({
+      id: s.nextId++, ingredient_id: id, ingredient_name: ing.name, kind: 'sale', delta: -qty, on_hand_after: ing.on_hand,
+      unit_cost: null, amount: null, order_id: o.id, note: null, actor_name: 'Customer', created_at: o.created_at,
+    })
+  }
+}
+
+/** Puts an order's tracked items and recipe ingredients back when it is cancelled. */
 function restock(s: Store, o: DemoOrder, actor: string) {
+  const used = new Map<string, number>()
+  for (const m of s.ingredientMoves.filter((x) => x.order_id === o.id && (x.kind === 'sale' || x.kind === 'cancel_return') && x.ingredient_id)) {
+    used.set(m.ingredient_id!, (used.get(m.ingredient_id!) ?? 0) - m.delta)
+  }
+  for (const [id, qty] of used) {
+    const ing = s.ingredients.find((i) => i.id === id)
+    if (!ing || qty <= 0) continue
+    ing.on_hand = Math.round((ing.on_hand + qty) * 1000) / 1000
+    ing.updated_at = now()
+    s.ingredientMoves.push({
+      id: s.nextId++, ingredient_id: id, ingredient_name: ing.name, kind: 'cancel_return', delta: qty, on_hand_after: ing.on_hand,
+      unit_cost: null, amount: null, order_id: o.id, note: null, actor_name: actor, created_at: now(),
+    })
+  }
   const sold = new Map<string, { name: string; qty: number }>()
   for (const m of s.movements.filter((x) => x.order_id === o.id && (x.kind === 'sale' || x.kind === 'cancel_return') && x.menu_item_id)) {
     const v = sold.get(m.menu_item_id!) ?? { name: m.item_name, qty: 0 }
@@ -521,6 +605,7 @@ export function createDemoBackend(): Backend {
             unit_cost: null, order_id: order.id, note: null, actor_name: 'Customer', created_at: created,
           })
         }
+        useIngredients(s, order, input.items.map((l) => ({ menu_item_id: l.menu_item_id, quantity: l.quantity })))
         return toCustomer(order)
       })
     },
@@ -754,6 +839,24 @@ export function createDemoBackend(): Backend {
         setCost(s.costs.items, id, input.cost, name)
         item.addons.forEach((a, idx) => setCost(s.costs.addons, a.id, input.addons[idx].cost, `${name} › ${a.name}`))
         for (const old of before?.addons ?? []) if (!item.addons.some((a) => a.id === old.id)) delete s.costs.addons[old.id]
+
+        if (input.recipe !== undefined) {
+          const lines = input.recipe
+          if (lines.length > 30 || lines.some((l) => !(l.quantity > 0 && l.quantity <= 100000) || !s.ingredients.some((i) => i.id === l.ingredient_id && i.is_active))) {
+            throw new AppError('invalid_recipe')
+          }
+          const old = s.recipes[id] ?? []
+          const ingName = (iid: string) => s.ingredients.find((i) => i.id === iid)?.name ?? '?'
+          for (const o of old) if (!lines.some((l) => l.ingredient_id === o.ingredient_id)) audit(s, me.name, 'recipe.removed', 'recipe', id, `${name} › ${ingName(o.ingredient_id)}`, { quantity: [o.quantity, null] })
+          for (const l of lines) {
+            const prev = old.find((o) => o.ingredient_id === l.ingredient_id)
+            const q = Math.round(l.quantity * 1000) / 1000
+            if (!prev) audit(s, me.name, 'recipe.added', 'recipe', id, `${name} › ${ingName(l.ingredient_id)}`, { quantity: [null, q] })
+            else if (prev.quantity !== q) audit(s, me.name, 'recipe.changed', 'recipe', id, `${name} › ${ingName(l.ingredient_id)}`, { quantity: [prev.quantity, q] })
+          }
+          if (lines.length) s.recipes[id] = lines.map((l) => ({ ingredient_id: l.ingredient_id, quantity: Math.round(l.quantity * 1000) / 1000 }))
+          else delete s.recipes[id]
+        }
         return id
       })
     },
@@ -959,6 +1062,7 @@ export function createDemoBackend(): Backend {
         s.movements,
         fromDay,
         toDay,
+        s.ingredientMoves,
       )
     },
 
@@ -1095,6 +1199,125 @@ export function createDemoBackend(): Backend {
         .filter((m) => !menuItemId || m.menu_item_id === menuItemId)
         .sort((a, b) => b.id - a.id)
         .slice(0, limit)
+    },
+
+    async listIngredients() {
+      await delay(80)
+      requireOwner()
+      return clone(load().ingredients).filter((i) => i.is_active).sort((a, b) => a.name.localeCompare(b.name))
+    },
+
+    async saveIngredient(input) {
+      await delay()
+      const me = requireOwner()
+      return mutate((s) => {
+        const name = cleanText(input.name)
+        if (!name || name.length > 60) throw new AppError('invalid_name')
+        const family: Record<string, string[]> = { g: ['g', 'kg'], ml: ['ml', 'L'], pcs: ['pcs', 'dozen'], packet: ['packet'] }
+        if (!family[input.base_unit]?.includes(input.display_unit)) throw new AppError('invalid', 'Choose a unit.')
+        if (!(input.low_at >= 0) || (input.opening ?? 0) < 0) throw new AppError('invalid_quantity')
+        if (s.ingredients.some((i) => i.is_active && i.id !== input.id && i.name.toLowerCase() === name.toLowerCase())) throw new AppError('ingredient_exists')
+        if (!input.id) {
+          const opening = input.opening ?? 0
+          const row: Ingredient = { id: uuid(), name, base_unit: input.base_unit, display_unit: input.display_unit, on_hand: opening, low_at: input.low_at, cost_per_unit: null, is_active: true, updated_at: now() }
+          s.ingredients.push(row)
+          s.ingredientMoves.push({ id: s.nextId++, ingredient_id: row.id, ingredient_name: name, kind: 'opening', delta: opening, on_hand_after: opening, unit_cost: null, amount: null, order_id: null, note: null, actor_name: me.name, created_at: now() })
+          audit(s, me.name, 'ingredient.created', 'ingredient', row.id, name, { on_hand: [null, opening], display_unit: [null, row.display_unit] })
+          return clone(row)
+        }
+        const row = s.ingredients.find((i) => i.id === input.id && i.is_active)
+        if (!row) throw new AppError('ingredient_not_found')
+        if (row.base_unit !== input.base_unit) throw new AppError('unit_family_locked')
+        const before = clone(row)
+        Object.assign(row, { name, display_unit: input.display_unit, low_at: input.low_at, updated_at: now() })
+        audit(s, me.name, 'ingredient.updated', 'ingredient', row.id, name, diff(before, row, ['name', 'display_unit', 'low_at']))
+        return clone(row)
+      })
+    },
+
+    async archiveIngredient(id) {
+      await delay()
+      const me = requireOwner()
+      mutate((s) => {
+        const row = s.ingredients.find((i) => i.id === id && i.is_active)
+        if (!row) throw new AppError('ingredient_not_found')
+        row.is_active = false
+        for (const k of Object.keys(s.recipes)) {
+          s.recipes[k] = s.recipes[k].filter((l) => l.ingredient_id !== id)
+          if (!s.recipes[k].length) delete s.recipes[k]
+        }
+        audit(s, me.name, 'ingredient.archived', 'ingredient', id, row.name, {})
+      })
+    },
+
+    async adjustIngredient(id, kind, quantity, extra = {}) {
+      await delay()
+      const me = requireOwner()
+      return mutate((s) => {
+        if (!['purchase', 'usage', 'waste', 'count', 'correction'].includes(kind)) throw new AppError('invalid_request')
+        if (!Number.isFinite(quantity)) throw new AppError('invalid_quantity')
+        const note = extra.note ? cleanText(extra.note) : ''
+        if (note.length > 140) throw new AppError('invalid_note')
+        const row = s.ingredients.find((i) => i.id === id && i.is_active)
+        if (!row) throw new AppError('ingredient_not_found')
+        let delta: number
+        let cost: number | null = null
+        if (kind === 'purchase') {
+          if (quantity <= 0) throw new AppError('invalid_quantity')
+          if (extra.amount != null && (extra.amount < 0 || !Number.isInteger(extra.amount))) throw new AppError('invalid_amount')
+          delta = quantity
+          if (extra.amount) cost = extra.amount / quantity
+        } else if (kind === 'usage' || kind === 'waste') {
+          if (quantity <= 0) throw new AppError('invalid_quantity')
+          delta = -quantity
+          cost = row.cost_per_unit
+        } else if (kind === 'count') {
+          if (quantity < 0) throw new AppError('invalid_quantity')
+          delta = quantity - row.on_hand
+        } else {
+          if (quantity === 0) throw new AppError('invalid_quantity')
+          if (!note) throw new AppError('note_required')
+          delta = quantity
+        }
+        const before = row.on_hand
+        row.on_hand = Math.round((row.on_hand + delta) * 1000) / 1000
+        if (kind === 'purchase' && cost !== null) row.cost_per_unit = cost
+        row.updated_at = now()
+        if (kind === 'purchase' && extra.addExpense && extra.amount) {
+          const e: Expense = {
+            id: uuid(), spent_on: cafeDate(), category: 'ingredients', amount: extra.amount,
+            note: [`${row.name}${extra.label ? ` ${extra.label}` : ''}`, note || null].filter(Boolean).join(' · ').slice(0, 140),
+            created_at: now(), updated_at: now(),
+          }
+          s.expenses.push(e)
+          audit(s, me.name, 'expense.created', 'expense', e.id, e.category, diff(null, e, ['spent_on', 'category', 'amount', 'note']))
+        }
+        s.ingredientMoves.push({
+          id: s.nextId++, ingredient_id: id, ingredient_name: row.name, kind, delta, on_hand_after: row.on_hand, unit_cost: cost,
+          amount: kind === 'purchase' ? extra.amount ?? null : null, order_id: null, note: note || null, actor_name: me.name, created_at: now(),
+        })
+        audit(s, me.name, `ingredient.${kind}`, 'ingredient', id, row.name, {
+          on_hand: [before, row.on_hand],
+          ...(kind === 'purchase' && extra.amount != null ? { amount: [null, extra.amount] as [unknown, unknown] } : {}),
+          ...(note ? { note: [null, note] as [unknown, unknown] } : {}),
+        })
+        return clone(row)
+      })
+    },
+
+    async listIngredientMovements(id, limit = 200) {
+      await delay(80)
+      requireOwner()
+      return clone(load().ingredientMoves)
+        .filter((m) => !id || m.ingredient_id === id)
+        .sort((a, b) => b.id - a.id)
+        .slice(0, limit)
+    },
+
+    async getRecipes() {
+      await delay(80)
+      requireOwner()
+      return clone(load().recipes)
     },
 
     async listAudit({ fromDay, toDay, beforeId, limit = 100 }) {

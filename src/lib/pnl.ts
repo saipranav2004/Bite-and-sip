@@ -1,7 +1,7 @@
 // Profit & loss: the statement shown to the owner, and (for the demo backend)
 // the same aggregation the database does in public.profit_and_loss.
 import { addDays, cafeDate, cafeDayStartIso } from './format'
-import type { Expense, ExpenseCategory, ProfitAndLossData, StaffOrder, StockMovement } from './types'
+import type { Expense, ExpenseCategory, IngredientMovement, ProfitAndLossData, StaffOrder, StockMovement } from './types'
 
 export const EXPENSE_CATEGORIES: { value: ExpenseCategory; label: string; hint: string }[] = [
   { value: 'ingredients', label: 'Ingredients & groceries', hint: 'Milk, vegetables, bread, Maggi packets…' },
@@ -107,6 +107,7 @@ export function computeProfitAndLoss(
   movements: StockMovement[],
   from: string,
   to: string,
+  ingredientMovements: IngredientMovement[] = [],
 ): ProfitAndLossData {
   const start = cafeDayStartIso(from)
   const end = cafeDayStartIso(addDays(to, 1))
@@ -117,6 +118,7 @@ export function computeProfitAndLoss(
   )
   const exp = expenses.filter((e) => e.spent_on >= from && e.spent_on <= to)
   const waste = movements.filter((m) => m.kind === 'waste' && m.created_at >= start && m.created_at < end)
+  const ingredientWaste = ingredientMovements.filter((m) => m.kind === 'waste' && m.unit_cost !== null && m.created_at >= start && m.created_at < end)
   const sum = <T,>(xs: T[], f: (x: T) => number) => xs.reduce((s, x) => s + f(x), 0)
 
   const byCategory = new Map<ExpenseCategory, { amount: number; entries: number }>()
@@ -163,7 +165,9 @@ export function computeProfitAndLoss(
     costed_sales: sum(costed, (l) => l.line_total),
     uncosted_sales: sum(uncosted, (l) => l.line_total),
     uncosted_items: new Set(uncosted.map((l) => l.name)).size,
-    waste_cost: sum(waste.filter((m) => m.unit_cost !== null), (m) => -m.delta * (m.unit_cost as number)),
+    waste_cost:
+      sum(waste.filter((m) => m.unit_cost !== null), (m) => -m.delta * (m.unit_cost as number)) +
+      Math.round(sum(ingredientWaste, (m) => -m.delta * (m.unit_cost as number))),
     waste_units: sum(waste, (m) => -m.delta),
     waste_uncosted_units: sum(waste.filter((m) => m.unit_cost === null), (m) => -m.delta),
     expenses: [...byCategory.entries()]

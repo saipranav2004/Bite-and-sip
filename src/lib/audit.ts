@@ -19,7 +19,10 @@ export function categoryOf(e: AuditEntry): AuditCategory {
     case 'addon':
     case 'category':
     case 'cost':
+    case 'recipe':
       return 'menu'
+    case 'ingredient':
+      return 'stock'
     case 'order':
       return 'orders'
     case 'stock':
@@ -53,7 +56,7 @@ const FIELD_LABEL: Record<string, string> = {
   upi_id: 'UPI ID', upi_payee_name: 'UPI payee name', is_open: 'Taking orders', closed_message: 'Closed message', cafe_name: 'Café name',
   role: 'Role', is_active: 'Access', display_name: 'Name', user_id: 'User',
   payment_status: 'Payment', payment_reference: 'Reference', status: 'Status', cancel_reason: 'Reason',
-  on_hand: 'On hand', low_at: 'Low-stock level', note: 'Note', amount: 'Amount', spent_on: 'Date', category: 'Category', label: 'Table',
+  on_hand: 'On hand', low_at: 'Low-stock level', quantity: 'Quantity', display_unit: 'Unit', note: 'Note', amount: 'Amount', spent_on: 'Date', category: 'Category', label: 'Table',
 }
 
 const HIDDEN = new Set(['id', 'menu_item_id', 'user_id'])
@@ -171,6 +174,17 @@ export function describe(e: AuditEntry): string {
     case 'stock.tracking_on': return `started tracking stock of ${what}`
     case 'stock.tracking_off': return `stopped tracking stock of ${what}`
     case 'stock.low_level_changed': return `changed the low-stock level of ${what}`
+    case 'ingredient.created': return `added raw material ${what}`
+    case 'ingredient.updated': return `edited raw material ${what}`
+    case 'ingredient.archived': return `removed raw material ${what}`
+    case 'ingredient.purchase': return `bought ${what}`
+    case 'ingredient.usage': return `recorded usage of ${what}`
+    case 'ingredient.waste': return `wrote off ${what}`
+    case 'ingredient.count': return `counted ${what}`
+    case 'ingredient.correction': return `corrected the stock of ${what}`
+    case 'recipe.added': return `added ${what.split(' › ')[1] ?? what} to the recipe of ${what.split(' › ')[0]}`
+    case 'recipe.changed': return `changed the recipe of ${what.split(' › ')[0]} (${what.split(' › ')[1] ?? ''})`
+    case 'recipe.removed': return `removed ${what.split(' › ')[1] ?? what} from the recipe of ${what.split(' › ')[0]}`
     case 'expense.created': return `logged an expense (${expenseLabel(what)})`
     case 'expense.updated': return `edited an expense (${expenseLabel(what)})`
     case 'expense.deleted': return `deleted an expense (${expenseLabel(what)})`

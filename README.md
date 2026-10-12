@@ -1,6 +1,6 @@
 # Bite & Sip — College Café Ordering
 
-Students scan a table QR, order from their phone, pay cash or UPI, and get told when to collect at the counter. The owner runs the whole café from one login: the live orders board and payments, menu and costs, stock, expenses, profit & loss, an audit log, UPI and table QR codes. Cooks don't need an account.
+Students scan the QR on their table, order and pay from their phone, and the food is brought to that table (orders from the counter QR are collected at the counter). The owner runs the whole café from one login: the live orders board and payments, menu and costs, stock, expenses, profit & loss, an audit log, UPI and table QR codes. Cooks don't need an account.
 
 **Stack:** React 19 · Vite · Tailwind CSS v4 · Supabase (Postgres, Auth, Realtime, Storage) · Vercel.
 
@@ -16,7 +16,9 @@ Students scan a table QR, order from their phone, pay cash or UPI, and get told 
   - one-tap open / close for orders, sold-out switches
 - **Owner, running the business:**
   - menu editing (photos, prices, add-ons, categories) with the cost to make each item and live margins
-  - **Inventory:** track batch items (samosas, sandwiches); orders reduce stock, cancellations return it, items sell out by themselves at zero; received / waste / recount / correction with history and low-stock alerts
+  - **Raw materials:** any ingredient name (milk, maida, tea powder…) with a unit (g, kg, ml, L, pieces, dozen, packets); record bought (with price, optionally added to Expenses), used, wasted and counted; low-stock warnings, stock value and full history
+  - **Recipes (optional):** e.g. Masala Chai = 100 ml milk + 4 g tea powder + 10 g sugar. Every sale uses them up automatically, cancellations put them back, and the recipe gives the cost per item. Low ingredient stock never blocks a sale
+  - **Ready-made items:** track batch items (samosas, sandwiches); orders reduce stock, cancellations return it, items sell out by themselves at zero
   - **Expenses:** log wages, rent, gas, ingredients… by category
   - **Profit & loss:** sales − food cost = gross profit − running costs − waste = net profit, with margins, previous-period comparison, per-item profit and CSV export. Food cost comes from item costs *or* ingredient purchases — never both, so nothing is counted twice
   - **Audit log:** every change to prices, costs, stock, payments, staff and settings, who made it and when; append-only, CSV export

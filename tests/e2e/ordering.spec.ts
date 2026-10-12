@@ -16,7 +16,7 @@ test('brand intro plays once on QR entry, can be skipped, and never shows for st
   await expect(page.getByRole('img', { name: 'Bite & Sip College Café' })).toBeVisible()
   await page.getByRole('button', { name: 'Skip' }).click()
   await expect(intro).toHaveCount(0)
-  await expect(page.getByText('Table T5 · Pickup at the counter')).toBeVisible()
+  await expect(page.getByText('Table T5 · We’ll bring it to you')).toBeVisible()
   await page.reload()
   await expect(page.getByRole('heading', { name: /Order from your seat/ })).toBeVisible()
   await expect(intro).toHaveCount(0)
@@ -40,7 +40,7 @@ test('student orders with UPI, kitchen verifies and hands over, student sees eac
   page.on('pageerror', (e) => errors.push(e.message))
 
   await page.goto('/t/T12')
-  await expect(page.getByText('Table T12 · Pickup at the counter')).toBeVisible()
+  await expect(page.getByText('Table T12 · We’ll bring it to you')).toBeVisible()
   await page.getByRole('button', { name: /College Special Maggi, ₹40/ }).click()
   await page.getByLabel('Extra Cheese').check()
   await page.getByRole('button', { name: /Add to cart · ₹55/ }).click()
@@ -70,16 +70,18 @@ test('student orders with UPI, kitchen verifies and hands over, student sees eac
   await showStage(staff, 'Preparing')
   await card.getByRole('button', { name: 'Mark ready' }).click()
   await showStage(staff, 'Ready')
-  await expect(card.getByRole('button', { name: 'Hand over' })).toHaveCount(0) // unpaid UPI can't be handed over
+  await expect(card.getByText('Table T12')).toBeVisible() // you know where to take it
+  await expect(card.getByRole('button', { name: 'Served at T12' })).toHaveCount(0) // unpaid UPI can't be served
   await card.getByRole('button', { name: 'Check UPI payment' }).click()
   await staff.getByLabel(/UPI reference/).fill('UTR 4321')
   await staff.getByRole('button', { name: /Received ₹70/ }).click()
-  await expect(page.getByRole('heading', { name: 'Ready for pickup' })).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByRole('heading', { name: 'Ready — on its way' })).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByText('We’re bringing it to Table T12.')).toBeVisible()
   await expect(page.getByText(/confirmed by the café/)).toBeVisible({ timeout: 15_000 })
 
-  await card.getByRole('button', { name: 'Hand over' }).click()
+  await card.getByRole('button', { name: 'Served at T12' }).click()
   await expect(card).toHaveCount(0)
-  await expect(page.getByRole('heading', { name: 'Collected' })).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByRole('heading', { name: 'Served' })).toBeVisible({ timeout: 15_000 })
   expect(errors).toEqual([])
 })
 

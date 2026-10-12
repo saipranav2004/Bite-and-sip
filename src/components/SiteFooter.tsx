@@ -4,8 +4,8 @@ import { Wordmark } from './ui'
 
 const STEPS = [
   { icon: IconBag, title: 'Order from your seat', body: 'Pick your food and add notes for the kitchen.' },
-  { icon: IconReceipt, title: 'Pay your way', body: 'Cash at the counter, or UPI from your phone.' },
-  { icon: IconPin, title: 'Collect when ready', body: 'This page tells you the moment it’s ready.' },
+  { icon: IconReceipt, title: 'Pay your way', body: 'UPI from your phone, or cash.' },
+  { icon: IconPin, title: 'We bring it over', body: 'Ordered from a table QR? We serve it at your table. Otherwise collect it at the counter.' },
 ]
 
 /** "How it works" plus café links, shown at the end of the student menu. */
@@ -36,7 +36,7 @@ export function SiteFooter() {
             <Link to="/staff/login" className="hover:text-white">Staff login</Link>
           </nav>
         </div>
-        <p className="mt-4 text-xs text-white/50">Bite &amp; Sip College Café · Pickup at the counter · Prices include all charges.</p>
+        <p className="mt-4 text-xs text-white/50">Bite &amp; Sip College Café · Table service and counter pickup · Prices include all charges.</p>
       </div>
     </footer>
   )

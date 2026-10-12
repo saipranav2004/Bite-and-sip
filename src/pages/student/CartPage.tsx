@@ -184,7 +184,9 @@ export function CartPage() {
         <section aria-labelledby="details-h" className="card space-y-4 p-4">
           <div>
             <h2 id="details-h" className="text-lg font-extrabold">Your details</h2>
-            <p className="text-sm text-muted">We call your name at the counter. Your number is only used for this order.</p>
+            <p className="text-sm text-muted">
+              {table ? `We’ll bring your order to Table ${table}.` : 'We call your name at the counter.'} Your number is only used for this order.
+            </p>
           </div>
           <div>
             <label htmlFor={nameId} className="label">Name</label>
@@ -229,11 +231,14 @@ export function CartPage() {
             </div>
             {errors.phone && <p id={`${phoneId}-err`} className="mt-1.5 text-sm font-semibold text-danger">{errors.phone}</p>}
           </div>
-          <div className="flex items-center gap-2 rounded-xl bg-sunken px-3 py-2.5 text-sm">
+          <div className={`flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm ${table ? 'bg-brand-soft ring-1 ring-brand-strong/40' : 'bg-sunken'}`}>
             <IconPin size={16} className="shrink-0" />
             <span className="flex-1">
-              <strong>Pickup at the counter</strong>
-              {table && <> · You’re at table {table}</>}
+              {table ? (
+                <><strong>Served at your table</strong> · Table {table}</>
+              ) : (
+                <><strong>Pickup at the counter</strong> · Scan the QR on your table for table service</>
+              )}
             </span>
             {table && (
               <button
@@ -260,8 +265,8 @@ export function CartPage() {
               setMethod('cash')
               setErrors((x) => ({ ...x, method: undefined }))
             }}
-            title="Cash at the counter"
-            body="Pay when you collect your order."
+            title={table ? 'Cash' : 'Cash at the counter'}
+            body={table ? 'Pay when we bring your food.' : 'Pay when you collect your order.'}
           />
           <PaymentOption
             checked={method === 'upi'}

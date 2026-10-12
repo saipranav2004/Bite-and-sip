@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react'
+import { Link } from 'react-router-dom'
 import { backend } from '../../backend'
 import type { MenuItemInput } from '../../backend/types'
 import { PageBody, PageHeader } from '../../components/admin'
@@ -9,7 +10,8 @@ import { friendlyError } from '../../lib/errors'
 import { money, percent } from '../../lib/format'
 import { prepareMenuPhoto } from '../../lib/image'
 import { isRemovableImage } from '../../lib/images'
-import type { Category, Costs, MenuItem } from '../../lib/types'
+import type { Category, Costs, Ingredient, MenuItem, Recipes } from '../../lib/types'
+import { toBase, UNITS, unitsFor, type Unit } from '../../lib/units'
 import { cleanText } from '../../lib/validation'
 import { usePublicData } from '../../state/publicData'
 import { useStaffSession } from '../../state/staffSession'
@@ -24,15 +26,18 @@ export function MenuManager() {
   const [query, setQuery] = useState('')
   const [pending, setPending] = useState<Set<string>>(new Set())
   const [costs, setCosts] = useState<Costs | null>(null)
+  const [ingredients, setIngredients] = useState<Ingredient[] | null>(null)
+  const [recipes, setRecipes] = useState<Recipes | null>(null)
   const [missingOnly, setMissingOnly] = useState(false)
 
   const loadCosts = useCallback(async () => {
     if (!isOwner) return
-    try {
-      setCosts(await backend.getCosts())
-    } catch {
-      setCosts(null)
-    }
+    const [c, i, r] = await Promise.allSettled([backend.getCosts(), backend.listIngredients(), backend.getRecipes()])
+    setCosts(c.status === 'fulfilled' ? c.value : null)
+    // Recipes are only editable when both lists loaded, so a failed load can never wipe a recipe.
+    const ok = i.status === 'fulfilled' && r.status === 'fulfilled'
+    setIngredients(ok ? i.value : null)
+    setRecipes(ok ? r.value : null)
   }, [isOwner])
   useEffect(() => {
     void loadCosts()
@@ -187,6 +192,8 @@ export function MenuManager() {
           item={editing === 'new' ? null : editing}
           categories={categories}
           costs={costs}
+          ingredients={ingredients}
+          recipe={editing && editing !== 'new' && recipes ? recipes[editing.id] ?? [] : []}
           onClose={() => setEditing(null)}
           onSaved={async (msg) => {
             await Promise.all([refresh(), loadCosts()])
@@ -210,6 +217,12 @@ function CostNote({ price, cost }: { price: number; cost: number | undefined }) 
   )
 }
 
+interface RecipeDraft {
+  ingredient_id: string
+  qty: string
+  unit: Unit
+}
+
 interface AddonDraft {
   id?: string
   name: string
@@ -220,7 +233,17 @@ interface AddonDraft {
 
 function ItemEditor({
   open, item, categories, costs, onClose, onSaved,
-}: { open: boolean; item: MenuItem | null; categories: Category[]; costs: Costs | null; onClose: () => void; onSaved: (msg: string) => Promise<void> }) {
+  ingredients, recipe,
+}: {
+  open: boolean
+  item: MenuItem | null
+  categories: Category[]
+  costs: Costs | null
+  ingredients: Ingredient[] | null
+  recipe: { ingredient_id: string; quantity: number }[]
+  onClose: () => void
+  onSaved: (msg: string) => Promise<void>
+}) {
   const toast = useToast()
   const [name, setName] = useState(item?.name ?? '')
   const [categoryId, setCategoryId] = useState(item?.category_id ?? categories[0]?.id ?? '')
@@ -239,6 +262,26 @@ function ItemEditor({
     })) ?? [],
   )
   const showCosts = costs !== null
+  const ingById = new Map((ingredients ?? []).map((i) => [i.id, i]))
+  const toDrafts = () =>
+    recipe
+      .filter((l) => ingById.has(l.ingredient_id))
+      .map((l) => ({ ingredient_id: l.ingredient_id, qty: String(l.quantity), unit: ingById.get(l.ingredient_id)!.base_unit as Unit }))
+  // null until raw materials and recipes have loaded; until then a save leaves the recipe untouched.
+  const [draftRows, setRecipeRows] = useState<RecipeDraft[] | null>(() => (ingredients ? toDrafts() : null))
+  useEffect(() => {
+    if (draftRows === null && ingredients) setRecipeRows(toDrafts())
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ingredients])
+  const showRecipe = draftRows !== null
+  const recipeRows = draftRows ?? []
+  const recipeCost = recipeRows.reduce<number | null>((sum, r) => {
+    const ing = ingById.get(r.ingredient_id)
+    const q = Number(r.qty)
+    if (sum === null || !ing || !(q > 0)) return sum
+    if (ing.cost_per_unit === null) return null
+    return sum + toBase(q, r.unit) * ing.cost_per_unit
+  }, 0)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(false)
@@ -282,6 +325,14 @@ function ItemEditor({
     if (!categoryId) e.category = 'Choose a category.'
     if (description.length > 200) e.description = 'Keep the description under 200 characters.'
     if (cost.trim() !== '' && (!/^\d+$/.test(cost.trim()) || Number(cost) > 5000)) e.cost = 'Enter a whole-rupee cost up to 5000, or leave it empty.'
+    const seenIng = new Set<string>()
+    recipeRows.forEach((r, i) => {
+      const q = Number(r.qty)
+      if (!r.ingredient_id) e[`recipe-${i}`] = 'Choose a raw material or remove the line.'
+      else if (seenIng.has(r.ingredient_id)) e[`recipe-${i}`] = 'This raw material is already in the recipe.'
+      else if (!(q > 0) || toBase(q, r.unit) > 100000) e[`recipe-${i}`] = 'Enter a quantity above zero.'
+      seenIng.add(r.ingredient_id)
+    })
     const seen = new Set<string>()
     addons.forEach((a, i) => {
       const n = cleanText(a.name)
@@ -305,6 +356,7 @@ function ItemEditor({
       is_popular: popular,
       image_path: imagePath,
       ...(showCosts ? { cost: cost.trim() === '' ? null : Number(cost) } : {}),
+      ...(showRecipe ? { recipe: recipeRows.map((r) => ({ ingredient_id: r.ingredient_id, quantity: toBase(Number(r.qty), r.unit) })) } : {}),
       addons: addons.map((a) => ({
         id: a.id, name: cleanText(a.name), price: Number(a.price), is_available: a.is_available,
         ...(showCosts ? { cost: a.cost.trim() === '' ? null : Number(a.cost) } : {}),
@@ -495,6 +547,85 @@ function ItemEditor({
               )}
             </div>
           </fieldset>
+          {showRecipe && (
+            <fieldset>
+              <legend className="label">Recipe <span className="font-normal text-muted">(optional) · raw materials used for one</span></legend>
+              {ingredients!.length === 0 ? (
+                <p className="rounded-xl border border-dashed border-line-strong px-4 py-3 text-sm text-muted">
+                  Add raw materials in <Link to="/staff/inventory" className="font-semibold underline">Inventory</Link> first. Then each sale can use them up automatically.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {recipeRows.map((r, i) => {
+                    const ing = ingById.get(r.ingredient_id)
+                    return (
+                      <div key={i}>
+                        <div className="flex items-center gap-2">
+                          <select
+                            aria-label={`Recipe line ${i + 1} raw material`}
+                            className="field-input min-w-0 flex-1"
+                            value={r.ingredient_id}
+                            onChange={(e) => {
+                              const next = ingById.get(e.target.value)
+                              setRecipeRows((rows) => (rows ?? []).map((x, j) => (j === i ? { ...x, ingredient_id: e.target.value, unit: (next?.base_unit ?? x.unit) as Unit } : x)))
+                            }}
+                          >
+                            <option value="">Choose…</option>
+                            {ingredients!.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                          </select>
+                          <input
+                            aria-label={`Recipe line ${i + 1} quantity`}
+                            className="field-input tabular w-20"
+                            inputMode="decimal"
+                            placeholder="0"
+                            value={r.qty}
+                            onChange={(e) => setRecipeRows((rows) => (rows ?? []).map((x, j) => (j === i ? { ...x, qty: e.target.value.replace(/[^\d.]/g, '').slice(0, 9) } : x)))}
+                          />
+                          <select
+                            aria-label={`Recipe line ${i + 1} unit`}
+                            className="field-input !w-auto"
+                            value={r.unit}
+                            disabled={!ing}
+                            onChange={(e) => setRecipeRows((rows) => (rows ?? []).map((x, j) => (j === i ? { ...x, unit: e.target.value as Unit } : x)))}
+                          >
+                            {(ing ? unitsFor(ing.base_unit) : UNITS).map((u) => <option key={u.value} value={u.value}>{u.value}</option>)}
+                          </select>
+                          <Button variant="ghost" size="sm" aria-label={`Remove recipe line ${i + 1}`} onClick={() => setRecipeRows((rows) => (rows ?? []).filter((_, j) => j !== i))}>
+                            <IconTrash size={16} />
+                          </Button>
+                        </div>
+                        {errors[`recipe-${i}`] && <p className="mt-1 text-sm font-semibold text-danger">{errors[`recipe-${i}`]}</p>}
+                      </div>
+                    )
+                  })}
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    {recipeRows.length < 30 && (
+                      <Button variant="secondary" size="sm" onClick={() => setRecipeRows((rows) => [...(rows ?? []), { ingredient_id: '', qty: '', unit: 'g' }])}>
+                        <IconPlus size={16} /> Raw material
+                      </Button>
+                    )}
+                    {recipeRows.length > 0 && (
+                      <p className="text-sm text-muted">
+                        {recipeCost === null ? (
+                          'Cost: record a purchase price for every raw material to see it.'
+                        ) : (
+                          <>
+                            Ingredients cost about <span className="tabular font-bold text-ink">{money(Math.round(recipeCost * 100) / 100)}</span>
+                            {showCosts && (
+                              <button type="button" className="ml-2 font-semibold text-ink underline" onClick={() => setCost(String(Math.round(recipeCost)))}>
+                                Use as cost
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </p>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted">Each sale uses these up; a cancelled order puts them back. Low stock never stops a student from ordering.</p>
+                </div>
+              )}
+            </fieldset>
+          )}
           {Object.keys(errors).length > 0 && <Banner tone="danger">Please fix the highlighted fields.</Banner>}
         </div>
       </form>

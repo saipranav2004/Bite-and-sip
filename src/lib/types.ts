@@ -270,3 +270,50 @@ export interface PlaceOrderInput {
   table_label: string | null
   items: { menu_item_id: string; quantity: number; addon_ids: string[]; note: string | null }[]
 }
+
+export type IngredientBaseUnit = 'g' | 'ml' | 'pcs' | 'packet'
+export type IngredientUnit = 'g' | 'kg' | 'ml' | 'L' | 'pcs' | 'dozen' | 'packet'
+
+/** A raw material. Quantities are in the base unit (g, ml, pcs, packet). */
+export interface Ingredient {
+  id: string
+  name: string
+  base_unit: IngredientBaseUnit
+  display_unit: IngredientUnit
+  on_hand: number
+  low_at: number
+  /** ₹ per base unit, from the latest purchase. */
+  cost_per_unit: number | null
+  is_active: boolean
+  updated_at: string
+}
+
+export interface IngredientInput {
+  id?: string
+  name: string
+  base_unit: IngredientBaseUnit
+  display_unit: IngredientUnit
+  low_at: number
+  /** Opening stock, for new ingredients only. */
+  opening?: number
+}
+
+export type IngredientAdjustKind = 'purchase' | 'usage' | 'waste' | 'count' | 'correction'
+
+export interface IngredientMovement {
+  id: number
+  ingredient_id: string | null
+  ingredient_name: string
+  kind: 'opening' | 'purchase' | 'usage' | 'sale' | 'cancel_return' | 'waste' | 'count' | 'correction'
+  delta: number
+  on_hand_after: number
+  unit_cost: number | null
+  amount: number | null
+  order_id: string | null
+  note: string | null
+  actor_name: string | null
+  created_at: string
+}
+
+/** Per menu item: ingredient quantities (base units) used to make one. */
+export type Recipes = Record<string, { ingredient_id: string; quantity: number }[]>

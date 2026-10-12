@@ -90,12 +90,14 @@ export function MenuPage() {
         <div className="mx-auto max-w-3xl md:px-4">
           <p className="inline-flex min-h-9 items-center gap-1.5 rounded-full bg-brand px-3 text-sm font-bold text-ink">
             <IconPin size={16} />
-            {table ? `Table ${table} · Pickup at the counter` : 'Pickup at the counter'}
+            {table ? `Table ${table} · We’ll bring it to you` : 'Pickup at the counter'}
           </p>
           <h1 className="mt-3 text-[1.6rem] leading-[1.15] font-extrabold tracking-tight sm:text-4xl">
             Hungry? <span className="text-brand">Order from your seat.</span>
           </h1>
-          <p className="mt-1.5 text-sm text-white/75 sm:text-[15px]">Track it live and collect it at the counter when it’s ready.</p>
+          <p className="mt-1.5 text-sm text-white/75 sm:text-[15px]">
+            {table ? `Order and pay from your phone — we’ll serve it at Table ${table}.` : 'Track it live and collect it at the counter when it’s ready.'}
+          </p>
           {error && <p className="mt-2 text-sm font-semibold text-brand">{error} Showing the last menu we loaded.</p>}
         </div>
       </section>

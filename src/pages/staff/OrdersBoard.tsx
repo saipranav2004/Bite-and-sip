@@ -15,7 +15,7 @@ type Column = 'placed' | 'preparing' | 'ready'
 const COLUMNS: { status: Column; title: string; empty: string }[] = [
   { status: 'placed', title: 'New', empty: 'No new orders.' },
   { status: 'preparing', title: 'Preparing', empty: 'Nothing on the stove.' },
-  { status: 'ready', title: 'Ready for pickup', empty: 'Nothing waiting at the counter.' },
+  { status: 'ready', title: 'Ready', empty: 'Nothing waiting to be served or collected.' },
 ]
 
 const SOUND_KEY = 'bitesip-staff-sound'
@@ -259,16 +259,22 @@ function OrderCard({
             <span className="tabular text-2xl font-extrabold tracking-tight">{orderCode(order.order_no)}</span>
             <StatusBadge status={order.status} />
           </div>
-          <p className="mt-0.5 truncate font-bold">{order.customer_name}</p>
+          <p className="mt-1.5">
+            {order.table_label ? (
+              <span className="inline-flex items-center gap-1.5 rounded-lg bg-ink px-2.5 py-1 text-base font-extrabold text-brand" title="Bring this order to the table">
+                <IconPin size={15} /> Table {order.table_label}
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 rounded-lg border border-line-strong px-2.5 py-1 text-sm font-bold text-ink-2" title="Customer collects at the counter">
+                Counter pickup
+              </span>
+            )}
+          </p>
+          <p className="mt-1 truncate font-bold">{order.customer_name}</p>
           <p className="flex flex-wrap items-center gap-x-3 text-sm text-muted">
             <span className="inline-flex items-center gap-1">
               <IconPhone size={13} /> ••{order.customer_phone.slice(-4)}
             </span>
-            {order.table_label && (
-              <span className="inline-flex items-center gap-1">
-                <IconPin size={13} /> {order.table_label}
-              </span>
-            )}
           </p>
         </div>
         <div className="text-right">
@@ -310,13 +316,19 @@ function OrderCard({
           </Button>
         )}
         {order.status === 'ready' && order.payment_status === 'paid' && (
-          <Button variant="dark" className="flex-1 whitespace-nowrap" loading={busy === 'done'} disabled={!!busy} onClick={() => void run('done', () => change('completed'), 'Handed over')}>
-            Hand over
+          <Button
+            variant="dark"
+            className="flex-1 whitespace-nowrap"
+            loading={busy === 'done'}
+            disabled={!!busy}
+            onClick={() => void run('done', () => change('completed'), order.table_label ? `Served at Table ${order.table_label}` : 'Handed over')}
+          >
+            {order.table_label ? `Served at ${order.table_label}` : 'Hand over'}
           </Button>
         )}
         {order.status === 'ready' && order.payment_status === 'unpaid' && order.payment_method === 'cash' && (
           <Button variant="dark" className="flex-1 whitespace-nowrap" disabled={!!busy} onClick={() => setDialog('cash')}>
-            Collect {money(order.total)} & hand over
+            {order.table_label ? `Collect ${money(order.total)} & serve` : `Collect ${money(order.total)} & hand over`}
           </Button>
         )}
         {order.payment_method === 'upi' && canMarkPaid(order) && (
@@ -368,7 +380,7 @@ function OrderCard({
           void run(
             'cash',
             () => (order.status === 'ready' ? change('completed', { markPaid: true }) : backend.setPayment(order.id, true)),
-            order.status === 'ready' ? 'Cash collected · handed over' : 'Marked as paid',
+            order.status === 'ready' ? (order.table_label ? `Cash collected · served at Table ${order.table_label}` : 'Cash collected · handed over') : 'Marked as paid',
           )
         }
       />
@@ -448,7 +460,7 @@ function CashDialog({ open, order, busy, onClose, onConfirm }: { open: boolean; 
     <Dialog
       open={open}
       onClose={onClose}
-      title={handover ? 'Collect cash and hand over' : 'Mark as paid in cash'}
+      title={handover ? (order.table_label ? `Collect cash at Table ${order.table_label}` : 'Collect cash and hand over') : 'Mark as paid in cash'}
       size="sm"
       footer={
         <div className="flex gap-3">
@@ -461,7 +473,13 @@ function CashDialog({ open, order, busy, onClose, onConfirm }: { open: boolean; 
     >
       <div className="space-y-3 px-5 py-4 text-[15px]">
         <OrderSummaryLine order={order} />
-        <p>{handover ? 'Take the cash, then hand over the order. This completes it.' : 'Use this if the customer paid at the counter before the food was ready.'}</p>
+        <p>
+          {handover
+            ? order.table_label
+              ? `Serve the order at Table ${order.table_label} and take the cash. This completes it.`
+              : 'Take the cash, then hand over the order. This completes it.'
+            : 'Use this if the customer has already paid you in cash.'}
+        </p>
       </div>
     </Dialog>
   )
@@ -523,7 +541,7 @@ function DoneToday({ orders }: { orders: StaffOrder[] }) {
         className="flex w-full items-center justify-between rounded-2xl bg-surface px-4 py-3 text-left font-bold ring-1 ring-line"
       >
         <span>
-          Finished today · {collected.length} collected, {orders.length - collected.length} cancelled
+          Finished today · {collected.length} completed, {orders.length - collected.length} cancelled
         </span>
         <span className="text-sm text-muted">{open ? 'Hide' : 'Show'}</span>
       </button>

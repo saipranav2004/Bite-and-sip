@@ -69,7 +69,7 @@ function OrderList({ title, orders }: { title: string; orders: CustomerOrder[] }
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="tabular font-extrabold">{orderCode(o.order_no)}</span>
-                  <StatusBadge status={o.status} />
+                  <StatusBadge status={o.status} label={o.status === 'completed' ? (o.table_label ? 'Served' : 'Collected') : undefined} />
                   {o.status !== 'cancelled' && <PaymentBadge display={paymentDisplay(o)} method={o.payment_method} />}
                 </div>
                 <p className="mt-1 truncate text-sm text-muted">

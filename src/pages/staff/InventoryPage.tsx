@@ -4,6 +4,8 @@ import { PageBody, PageHeader, Panel, SkeletonRows, StockBadge, TableScroll } fr
 import { IconBox, IconHistory, IconPlus, IconSettings } from '../../components/icons'
 import { Banner, Button, Dialog, EmptyState, useToast } from '../../components/ui'
 import { friendlyError } from '../../lib/errors'
+import { readJson, writeJson } from '../../lib/storage'
+import { IngredientsPanel } from './IngredientsPanel'
 import { ago, dateTime, money } from '../../lib/format'
 import type { MenuItem, StockAdjustKind, StockLevel, StockMovement } from '../../lib/types'
 import { usePublicData } from '../../state/publicData'
@@ -30,7 +32,52 @@ export const MOVEMENT_LABEL: Record<StockMovement['kind'], string> = {
 
 const WASTE_REASONS = ['Unsold at closing', 'Dropped or damaged', 'Expired', 'Made wrong']
 
+type Tab = 'raw' | 'ready'
+
 export function InventoryPage() {
+  const { profile } = useStaffSession()
+  const owner = profile?.role === 'owner'
+  const [tab, setTabState] = useState<Tab>(() => (owner ? readJson<Tab>('bitesip-inventory-tab', 'raw', 'session') : 'ready'))
+  const setTab = (t: Tab) => {
+    setTabState(t)
+    writeJson('bitesip-inventory-tab', t, 'session')
+  }
+  const current: Tab = owner ? tab : 'ready'
+  return (
+    <PageBody>
+      <PageHeader
+        title="Inventory"
+        subtitle={
+          current === 'raw'
+            ? 'Raw materials like milk, maida and tea powder: what you bought, used and have left.'
+            : 'Items you make in batches, like samosas. Tracked items sell out by themselves at zero.'
+        }
+      />
+      {owner && (
+        <div className="mb-4 inline-flex gap-1 rounded-lg border border-line bg-surface p-1" role="tablist" aria-label="Inventory type">
+          {([
+            ['raw', 'Raw materials'],
+            ['ready', 'Ready-made items'],
+          ] as [Tab, string][]).map(([t, label]) => (
+            <button
+              key={t}
+              type="button"
+              role="tab"
+              aria-selected={current === t}
+              onClick={() => setTab(t)}
+              className={`min-h-9 rounded-md px-3.5 text-sm font-semibold ${current === t ? 'bg-ink text-white' : 'text-ink-2 hover:bg-sunken'}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      {current === 'raw' ? <IngredientsPanel /> : <ReadyItemsPanel />}
+    </PageBody>
+  )
+}
+
+function ReadyItemsPanel() {
   const { profile } = useStaffSession()
   const owner = profile?.role === 'owner'
   const { data, refresh: refreshPublic } = usePublicData()
@@ -91,18 +138,14 @@ export function InventoryPage() {
   const shown = tracked.filter((t) => (filter === 'out' ? t.level.on_hand <= 0 : filter === 'low' ? t.level.on_hand > 0 && t.level.on_hand <= t.level.low_at : true))
 
   return (
-    <PageBody>
-      <PageHeader
-        title="Inventory"
-        subtitle="Count items you make in batches, like samosas or sandwiches. Tracked items sell out by themselves at zero."
-        actions={
-          owner && untracked.length > 0 ? (
-            <Button size="sm" onClick={() => setConfiguring('new')}>
-              <IconPlus size={16} /> Track an item
-            </Button>
-          ) : undefined
-        }
-      />
+    <>
+      {owner && untracked.length > 0 && tracked.length > 0 && (
+        <div className="mb-3 flex justify-end">
+          <Button size="sm" onClick={() => setConfiguring('new')}>
+            <IconPlus size={16} /> Track an item
+          </Button>
+        </div>
+      )}
 
       {error && <Banner tone="danger" className="mb-4" action={<Button size="sm" variant="secondary" onClick={() => void load()}>Retry</Button>}>{error}</Banner>}
 
@@ -226,7 +269,7 @@ export function InventoryPage() {
           }}
         />
       )}
-    </PageBody>
+    </>
   )
 }
 

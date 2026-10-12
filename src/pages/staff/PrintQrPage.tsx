@@ -16,7 +16,7 @@ export function PrintQrPage() {
   const cards = onlyCounter
     ? [{ key: 'counter', title: 'Order here', subtitle: 'Pickup at the counter', url: `${base}/` }]
     : [
-        ...data.tables.filter((t) => t.is_active).map((t) => ({ key: t.label, title: `Table ${t.label}`, subtitle: 'Pickup at the counter', url: `${base}/t/${encodeURIComponent(t.label)}` })),
+        ...data.tables.filter((t) => t.is_active).map((t) => ({ key: t.label, title: `Table ${t.label}`, subtitle: 'Scan to order · we bring it to your table', url: `${base}/t/${encodeURIComponent(t.label)}` })),
         { key: 'counter', title: 'Order here', subtitle: 'Pickup at the counter', url: `${base}/` },
       ]
 

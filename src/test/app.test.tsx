@@ -41,7 +41,7 @@ describe('student menu', () => {
 
   it('customises an item and keeps a correct cart total', async () => {
     const user = await renderApp('/t/T12')
-    await screen.findByText(/Table T12/)
+    await screen.findByText('Table T12 · We’ll bring it to you')
     await user.click(screen.getByRole('button', { name: /College Special Maggi, ₹40/ }))
     const dialog = await screen.findByRole('dialog')
     await user.click(within(dialog).getByLabelText(/Extra Cheese/))
@@ -83,7 +83,7 @@ describe('checkout', () => {
     const user = await cartWithChai()
     await user.type(screen.getByLabelText('Name'), 'Nikitha')
     await user.type(screen.getByLabelText('Mobile number'), '9876543210')
-    await user.click(screen.getByLabelText(/Cash at the counter/))
+    await user.click(screen.getByLabelText(/^Cash/))
     await user.click(screen.getByRole('button', { name: /Place order · ₹15/ }))
     expect(await screen.findByText('Order received', {}, { timeout: 4000 })).toBeInTheDocument()
     expect(screen.getByText(/in cash at the counter when you collect/)).toHaveTextContent('Pay ₹15 in cash at the counter')

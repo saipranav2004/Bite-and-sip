@@ -19,7 +19,7 @@ export const STATUS_LABEL: Record<OrderStatus, string> = {
   placed: 'New',
   preparing: 'Preparing',
   ready: 'Ready',
-  completed: 'Collected',
+  completed: 'Completed',
   cancelled: 'Cancelled',
 }
 
@@ -38,6 +38,22 @@ export const STUDENT_STEPS: { status: OrderStatus; label: string }[] = [
   { status: 'ready', label: 'Ready' },
   { status: 'completed', label: 'Collected' },
 ]
+
+/**
+ * Orders from a table QR are brought to the table; everything else is
+ * collected at the counter. The table on the order decides which.
+ */
+export function statusMessage(status: OrderStatus, table: string | null): { title: string; body: string } {
+  if (!table) return STATUS_MESSAGE[status]
+  if (status === 'ready') return { title: 'Ready — on its way', body: `We’re bringing it to Table ${table}.` }
+  if (status === 'completed') return { title: 'Served', body: 'Enjoy your food!' }
+  if (status === 'placed') return { title: 'Order received', body: `We’ll bring it to Table ${table} when it’s ready.` }
+  return STATUS_MESSAGE[status]
+}
+
+export function studentSteps(table: string | null) {
+  return table ? STUDENT_STEPS.map((s) => (s.status === 'completed' ? { ...s, label: 'Served' } : s)) : STUDENT_STEPS
+}
 
 export type PaymentDisplay = 'cash_due' | 'upi_pending' | 'upi_verifying' | 'paid'
 

@@ -1,5 +1,5 @@
 import type {
-  AuditEntry, AuditQuery, CafeSettings, CafeTable, Category, Costs, CustomerOrder, Expense, ExpenseInput, Menu,
+  AuditEntry, AuditQuery, CafeSettings, Ingredient, IngredientAdjustKind, IngredientInput, IngredientMovement, Recipes, CafeTable, Category, Costs, CustomerOrder, Expense, ExpenseInput, Menu,
   OrderStatus, PlaceOrderInput, ProfitAndLossData, SalesSummary, StaffMember, StaffOrder, StaffProfile,
   StaffRole, StockAdjustKind, StockLevel, StockMovement,
 } from '../lib/types'
@@ -27,6 +27,8 @@ export interface MenuItemInput {
   /** Owner-only cost to make one. undefined = leave unchanged, null = not set. */
   cost?: number | null
   addons: { id?: string; name: string; price: number; is_available: boolean; cost?: number | null }[]
+  /** Owner-only recipe (base units per item). undefined = leave unchanged, [] = no recipe. */
+  recipe?: { ingredient_id: string; quantity: number }[]
 }
 
 export interface StatusChange {
@@ -103,6 +105,19 @@ export interface Backend {
   /** Any staff: received stock, waste, a recount or a correction. */
   adjustStock(menuItemId: string, kind: StockAdjustKind, quantity: number, note: string | null): Promise<StockLevel>
   listStockMovements(menuItemId: string | null, limit?: number): Promise<StockMovement[]>
+
+  // Raw materials (owner)
+  listIngredients(): Promise<Ingredient[]>
+  saveIngredient(input: IngredientInput): Promise<Ingredient>
+  archiveIngredient(id: string): Promise<void>
+  adjustIngredient(
+    id: string,
+    kind: IngredientAdjustKind,
+    quantity: number,
+    extra?: { amount?: number | null; note?: string | null; addExpense?: boolean; label?: string | null },
+  ): Promise<Ingredient>
+  listIngredientMovements(id: string | null, limit?: number): Promise<IngredientMovement[]>
+  getRecipes(): Promise<Recipes>
 
   // Audit (owner)
   listAudit(query: AuditQuery): Promise<AuditEntry[]>
