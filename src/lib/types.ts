@@ -58,9 +58,14 @@ export interface OrderLineAddon {
 }
 
 export interface OrderLine {
+  /** null when the item has since been deleted from the menu. */
+  menu_item_id?: string | null
   name: string
   base_price: number
   addons: OrderLineAddon[]
+  /** Offer discount per unit (₹), taken off the base price. */
+  discount?: number
+  offer_title?: string | null
   unit_price: number
   quantity: number
   line_total: number
@@ -83,6 +88,8 @@ export interface CustomerOrder {
   cancel_reason: string | null
   cancelled_by: 'customer' | 'staff' | null
   track_key: string
+  /** Pre-order pickup time (null = as soon as possible). */
+  scheduled_for: string | null
   created_at: string
   updated_at: string
   preparing_at: string | null
@@ -90,6 +97,7 @@ export interface CustomerOrder {
   completed_at: string | null
   cancelled_at: string | null
   paid_at: string | null
+  feedback: { rating: number; comment: string | null } | null
   items: OrderLine[]
 }
 
@@ -109,6 +117,7 @@ export interface StaffOrder {
   item_count: number
   cancel_reason: string | null
   cancelled_by: 'customer' | 'staff' | null
+  scheduled_for: string | null
   created_at: string
   updated_at: string
   preparing_at: string | null
@@ -269,6 +278,10 @@ export interface PlaceOrderInput {
   payment_method: PaymentMethod
   table_label: string | null
   items: { menu_item_id: string; quantity: number; addon_ids: string[]; note: string | null }[]
+  /** Pre-order pickup time, later today. */
+  scheduled_for?: string | null
+  /** The total the student saw; the order is refused if the real total differs. */
+  expected_total?: number | null
 }
 
 export type IngredientBaseUnit = 'g' | 'ml' | 'pcs' | 'packet'
@@ -317,3 +330,147 @@ export interface IngredientMovement {
 
 /** Per menu item: ingredient quantities (base units) used to make one. */
 export type Recipes = Record<string, { ingredient_id: string; quantity: number }[]>
+
+/** A percentage discount on chosen items during a time window (café time). */
+export interface Offer {
+  id: string
+  title: string
+  percent_off: number
+  /** Empty = the whole menu. */
+  menu_item_ids: string[]
+  /** ISO weekdays, 1 = Monday. Empty = every day. */
+  days: number[]
+  /** "HH:MM" or "HH:MM:SS"; ends_at may be "24:00:00". */
+  starts_at: string
+  ends_at: string
+  valid_from: string | null
+  valid_to: string | null
+  is_active: boolean
+}
+
+export type OfferInput = Omit<Offer, 'id'> & { id?: string }
+
+export interface OfferStat {
+  title: string
+  orders: number
+  units: number
+  discount: number
+  sales: number
+}
+
+/** Shown before ordering. */
+export interface KitchenEta {
+  /** Orders waiting or being made right now. */
+  queue: number
+  /** Estimated minutes until a new order is ready. */
+  minutes: number
+  typical_minutes: number
+  samples: number
+}
+
+export type ServiceKind = 'water' | 'cutlery' | 'clean' | 'bill' | 'help'
+
+export interface ServiceRequest {
+  id: string
+  table_label: string
+  kind: ServiceKind
+  created_at: string
+  resolved_at: string | null
+}
+
+export interface FeedbackEntry {
+  order_id: string
+  rating: number
+  comment: string | null
+  created_at: string
+  order_no: number
+  customer_name: string
+  table_label: string | null
+  items: string
+}
+
+export interface DayFigures {
+  cash_received: number
+  cash_orders: number
+  upi_received: number
+  upi_orders: number
+  cash_refunds_due: number
+  unpaid_orders: number
+  unpaid_total: number
+  open_orders: number
+  expenses: number
+}
+
+export interface DayClosing {
+  day: string
+  opening_float: number
+  cash_received: number
+  cash_paid_out: number
+  expected_cash: number
+  counted_cash: number
+  difference: number
+  upi_received: number
+  note: string | null
+  closed_by_name: string | null
+  closed_at: string
+}
+
+export interface DayCloseSummary extends DayFigures {
+  day: string
+  closing: DayClosing | null
+  /** Opening float used at the last closing, as a suggestion. */
+  last_float: number | null
+}
+
+export interface DayCloseInput {
+  day: string
+  opening_float: number
+  paid_out: number
+  counted: number
+  note: string | null
+}
+
+/** Per ingredient, for a date range (base units). */
+export interface IngredientUsage {
+  ingredient_id: string
+  /** Used by sales, through recipes (net of cancellations). */
+  sold: number
+  /** Logged as used without a recipe. */
+  used: number
+  wasted: number
+  purchased: number
+  spent: number
+  /** Sum of count adjustments: negative = more was used than recorded. */
+  count_difference: number
+  counts: number
+  corrected: number
+  first_movement_at: string | null
+}
+
+export interface KitchenTicket {
+  id: string
+  order_no: number
+  customer_name: string
+  table_label: string | null
+  status: 'placed' | 'preparing' | 'ready'
+  scheduled_for: string | null
+  created_at: string
+  preparing_at: string | null
+  ready_at: string | null
+  items: { name: string; quantity: number; note: string | null; addons: string[] }[]
+}
+
+export interface KitchenBoard {
+  topic: string
+  cafe_name: string
+  orders: KitchenTicket[]
+  now: string
+}
+
+export type Lang = 'en' | 'hi' | 'te'
+
+/** A browser push subscription as JSON (PushSubscription.toJSON()). */
+export interface PushSubscriptionJson {
+  endpoint: string
+  keys: { p256dh: string; auth: string }
+}

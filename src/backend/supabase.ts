@@ -3,21 +3,35 @@ import { AppError, toAppError } from '../lib/errors'
 import { bundledImage, isBundledImage } from '../lib/images'
 import { cafeDayStartIso, addDays } from '../lib/format'
 import type {
+  DayClosing, FeedbackEntry, IngredientUsage, KitchenEta, Offer, ServiceRequest,
   AuditEntry, CafeSettings, CafeTable, Category, Costs, CustomerOrder, Expense, Ingredient, IngredientMovement, MenuItem, PlaceOrderInput, Recipes,
   ProfitAndLossData, SalesSummary, StaffMember, StaffOrder, StaffProfile, StockLevel, StockMovement,
 } from '../lib/types'
+import type { DayCloseSummary, KitchenBoard, OfferStat } from '../lib/types'
 import type { Backend, LiveStatus, MenuItemInput, PublicData, StatusChange } from './types'
 
 const ORDER_COLUMNS =
   'id, order_no, customer_name, customer_phone, table_label, status, payment_method, payment_status, ' +
   'customer_reported_paid_at, payment_reference, total, item_count, cancel_reason, cancelled_by, created_at, ' +
-  'updated_at, preparing_at, ready_at, completed_at, cancelled_at, paid_at, ' +
-  'items:order_items(name, base_price, addons, unit_price, quantity, line_total, note)'
+  'updated_at, preparing_at, ready_at, completed_at, cancelled_at, paid_at, scheduled_for, ' +
+  'items:order_items(menu_item_id, name, base_price, addons, discount, offer_title, unit_price, quantity, line_total, note)'
 
 const IMAGE_BUCKET = 'menu-images'
 const EXPENSE_COLUMNS = 'id, spent_on, category, amount, note, created_at, updated_at'
 const STOCK_COLUMNS = 'menu_item_id, on_hand, low_at, updated_at'
 const INGREDIENT_COLUMNS = 'id, name, base_unit, display_unit, on_hand, low_at, cost_per_unit, is_active, updated_at'
+const OFFER_COLUMNS = 'id, title, percent_off, menu_item_ids, days, starts_at, ends_at, valid_from, valid_to, is_active'
+
+const num = (v: unknown) => Number(v ?? 0)
+
+function toUsage(r: Record<string, unknown>): IngredientUsage {
+  return {
+    ingredient_id: String(r.ingredient_id),
+    sold: num(r.sold), used: num(r.used), wasted: num(r.wasted), purchased: num(r.purchased), spent: num(r.spent),
+    count_difference: num(r.count_difference), counts: num(r.counts), corrected: num(r.corrected),
+    first_movement_at: (r.first_movement_at as string | null) ?? null,
+  }
+}
 
 /** Postgres numeric may arrive as a string; the app always works with numbers. */
 function toIngredient(r: Record<string, unknown>): Ingredient {
@@ -61,12 +75,14 @@ export function createSupabaseBackend(url: string, key: string): Backend {
     mode: 'supabase',
 
     async getPublicData(): Promise<PublicData> {
-      const [settings, categories, items, tables, stock] = await Promise.all([
+      const [settings, categories, items, tables, stock, offers, eta] = await Promise.all([
         sb.from('cafe_settings').select('cafe_name, is_open, closed_message, upi_id, upi_payee_name, updated_at').single(),
         sb.from('categories').select('id, name, sort_order').order('sort_order').order('name'),
         sb.from('menu_items').select('id, category_id, name, description, price, is_veg, is_available, is_popular, image_path, sort_order, addons(id, menu_item_id, name, price, is_available, sort_order)'),
         sb.from('cafe_tables').select('label, is_active').order('label'),
         sb.from('stock_levels').select(STOCK_COLUMNS),
+        sb.from('offers').select(OFFER_COLUMNS).eq('is_active', true),
+        sb.rpc('kitchen_eta'),
       ])
       const tableList = unwrap(tables) as CafeTable[]
       return {
@@ -74,6 +90,9 @@ export function createSupabaseBackend(url: string, key: string): Backend {
         menu: { categories: unwrap(categories) as Category[], items: sortMenu(unwrap(items) as MenuItem[]) },
         tables: tableList.sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true })),
         stock: unwrap(stock) as StockLevel[],
+        // Older databases without offers still load the menu.
+        offers: offers.error ? [] : (offers.data as Offer[]),
+        eta: eta.error ? null : (eta.data as KitchenEta),
       }
     },
 
@@ -87,6 +106,8 @@ export function createSupabaseBackend(url: string, key: string): Backend {
           p_payment_method: input.payment_method,
           p_table_label: input.table_label,
           p_items: input.items,
+          p_scheduled_for: input.scheduled_for ?? null,
+          p_expected_total: input.expected_total ?? null,
         }),
       ) as CustomerOrder
     },
@@ -112,6 +133,58 @@ export function createSupabaseBackend(url: string, key: string): Backend {
       const channel: RealtimeChannel = sb
         .channel(`order:${trackKey}`, { config: { private: false } })
         .on('broadcast', { event: 'order_changed' }, () => onChange())
+        .subscribe((status) => onStatus(channelStatus(status)))
+      return () => {
+        void sb.removeChannel(channel)
+      }
+    },
+
+    async leaveFeedback(id, token, rating, comment) {
+      return unwrap(await sb.rpc('leave_feedback', { p_order_id: id, p_access_token: token, p_rating: rating, p_comment: comment })) as CustomerOrder
+    },
+
+    async requestService(table, kind) {
+      return unwrap(await sb.rpc('request_service', { p_table_label: table, p_kind: kind })) as ServiceRequest
+    },
+
+    async serviceRequestStatus(ids) {
+      if (ids.length === 0) return []
+      return unwrap(await sb.rpc('service_request_status', { p_ids: ids.slice(0, 10) })) as ServiceRequest[]
+    },
+
+    async pushPublicKey() {
+      const res = await sb.rpc('push_public_key')
+      return res.error ? null : ((res.data as string | null) ?? null)
+    },
+
+    async subscribeOrderPush(id, token, sub, lang) {
+      unwrap(await sb.rpc('subscribe_order_push', { p_order_id: id, p_access_token: token, p_subscription: sub, p_lang: lang }))
+    },
+
+    async subscribeStaffPush(sub) {
+      unwrap(await sb.rpc('subscribe_staff_push', { p_subscription: sub }))
+    },
+
+    async unsubscribePush(endpoint) {
+      unwrap(await sb.rpc('unsubscribe_push', { p_endpoint: endpoint }))
+    },
+
+    async staffPushEnabled(endpoint) {
+      return unwrap(await sb.rpc('staff_push_enabled', { p_endpoint: endpoint })) as boolean
+    },
+
+    async kitchenBoard(key) {
+      return unwrap(await sb.rpc('kitchen_board', { p_key: key })) as KitchenBoard
+    },
+
+    async kitchenAdvance(key, orderId, to) {
+      unwrap(await sb.rpc('kitchen_advance', { p_key: key, p_order_id: orderId, p_to: to }))
+    },
+
+    watchKitchen(topic, onChange, onStatus) {
+      const channel = sb
+        .channel(`kitchen:${topic}`, { config: { private: false } })
+        .on('broadcast', { event: 'changed' }, () => onChange())
         .subscribe((status) => onStatus(channelStatus(status)))
       return () => {
         void sb.removeChannel(channel)
@@ -210,6 +283,30 @@ export function createSupabaseBackend(url: string, key: string): Backend {
           onChange(row?.id ?? null)
         })
         .subscribe((status) => onStatus(channelStatus(status)))
+      return () => {
+        void sb.removeChannel(channel)
+      }
+    },
+
+    async listServiceRequests() {
+      const res = await sb
+        .from('service_requests')
+        .select('id, table_label, kind, created_at, resolved_at')
+        .is('resolved_at', null)
+        .gte('created_at', new Date(Date.now() - 2 * 3600000).toISOString())
+        .order('created_at')
+      return unwrap(res) as ServiceRequest[]
+    },
+
+    async resolveServiceRequest(id) {
+      unwrap(await sb.rpc('resolve_service_request', { p_id: id }))
+    },
+
+    watchServiceRequests(onChange) {
+      const channel = sb
+        .channel(`staff-help-${crypto.randomUUID()}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'service_requests' }, () => onChange())
+        .subscribe()
       return () => {
         void sb.removeChannel(channel)
       }
@@ -428,6 +525,82 @@ export function createSupabaseBackend(url: string, key: string): Backend {
       const out: Recipes = {}
       for (const r of rows) (out[r.menu_item_id] ??= []).push({ ingredient_id: r.ingredient_id, quantity: Number(r.quantity) })
       return out
+    },
+
+    async ingredientUsage(fromDay, toDay) {
+      const rows = unwrap(await sb.rpc('ingredient_usage', { p_from: fromDay, p_to: toDay })) as Record<string, unknown>[]
+      return rows.map(toUsage)
+    },
+
+    async listOffers() {
+      const res = await sb.from('offers').select(OFFER_COLUMNS).order('is_active', { ascending: false }).order('title')
+      return unwrap(res) as Offer[]
+    },
+
+    async saveOffer(input) {
+      const { id, ...values } = input
+      const res = id
+        ? await sb.from('offers').update(values).eq('id', id).select(OFFER_COLUMNS).maybeSingle()
+        : await sb.from('offers').insert(values).select(OFFER_COLUMNS).single()
+      const row = unwrap(res) as Offer | null
+      if (!row) throw new AppError('owner_only')
+      return row
+    },
+
+    async deleteOffer(id) {
+      const res = await sb.from('offers').delete().eq('id', id).select('id')
+      if ((unwrap(res) ?? []).length === 0) throw new AppError('owner_only')
+    },
+
+    async offerStats(fromDay, toDay) {
+      return unwrap(await sb.rpc('offer_stats', { p_from: fromDay, p_to: toDay })) as OfferStat[]
+    },
+
+    async listFeedback(fromDay, toDay) {
+      const res = await sb
+        .from('order_feedback')
+        .select('order_id, rating, comment, created_at, order:orders(order_no, customer_name, table_label, items:order_items(name, quantity))')
+        .gte('created_at', cafeDayStartIso(fromDay))
+        .lt('created_at', cafeDayStartIso(addDays(toDay, 1)))
+        .order('created_at', { ascending: false })
+        .limit(500)
+      const rows = unwrap(res) as unknown as {
+        order_id: string; rating: number; comment: string | null; created_at: string
+        order: { order_no: number; customer_name: string; table_label: string | null; items: { name: string; quantity: number }[] }
+      }[]
+      return rows.map<FeedbackEntry>((r) => ({
+        order_id: r.order_id, rating: r.rating, comment: r.comment, created_at: r.created_at,
+        order_no: r.order.order_no, customer_name: r.order.customer_name, table_label: r.order.table_label,
+        items: r.order.items.map((i) => `${i.quantity}× ${i.name}`).join(', '),
+      }))
+    },
+
+    async dayCloseSummary(day) {
+      return unwrap(await sb.rpc('day_close_summary', { p_day: day })) as DayCloseSummary
+    },
+
+    async closeDay(input) {
+      return unwrap(await sb.rpc('close_day', {
+        p_day: input.day, p_opening_float: input.opening_float, p_paid_out: input.paid_out, p_counted: input.counted, p_note: input.note,
+      })) as DayClosing
+    },
+
+    async listDayClosings(fromDay, toDay) {
+      const res = await sb
+        .from('day_closings')
+        .select('day, opening_float, cash_received, cash_paid_out, expected_cash, counted_cash, difference, upi_received, note, closed_by_name, closed_at')
+        .gte('day', fromDay)
+        .lte('day', toDay)
+        .order('day', { ascending: false })
+      return unwrap(res) as DayClosing[]
+    },
+
+    async kitchenLink() {
+      return unwrap(await sb.rpc('kitchen_link')) as { key: string | null; created_at: string | null }
+    },
+
+    async resetKitchenLink(enabled) {
+      return unwrap(await sb.rpc('kitchen_link_reset', { p_enabled: enabled })) as { key: string | null; created_at: string | null }
     },
 
     async listAudit({ fromDay, toDay, beforeId, limit = 100 }) {

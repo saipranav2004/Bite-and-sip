@@ -1,9 +1,10 @@
-import { useId, useState, type FormEvent } from 'react'
+import { useEffect, useId, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { backend, isDemo } from '../../backend'
 import { resetDemoData } from '../../backend/demo'
 import { PageBody, PageHeader, Panel } from '../../components/admin'
-import { IconPrinter, IconQr, IconTrash } from '../../components/icons'
+import { IconCopy, IconExternal, IconPrinter, IconQr, IconTrash } from '../../components/icons'
+import { AlertsSettings } from '../../components/StaffAlerts'
 import { QrImage } from '../../components/QrImage'
 import { Banner, Button, Dialog, Spinner, Switch, useToast } from '../../components/ui'
 import { friendlyError } from '../../lib/errors'
@@ -24,16 +25,89 @@ export function SettingsPage() {
   return (
     <PageBody>
       <div className="mx-auto max-w-3xl">
-        <PageHeader title="Settings" subtitle="Café status, UPI payments, table QR codes and your login." />
+        <PageHeader title="Settings" subtitle="Café status, payments, alerts, tables, the kitchen screen and your login." />
         <div className="space-y-4">
           <CafeStatus />
+          <Section title="Alerts & app" description="Get new orders on your phone even when it’s locked.">
+            <AlertsSettings />
+          </Section>
           <PaymentSettings />
           <TablesSettings />
+          <KitchenSettings />
           <AccountSettings />
           {isDemo && <DemoReset />}
         </div>
       </div>
     </PageBody>
+  )
+}
+
+/** A secret link for a tablet in the kitchen: tickets without prices, no login. */
+function KitchenSettings() {
+  const toast = useToast()
+  const [link, setLink] = useState<{ key: string | null; created_at: string | null } | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [confirm, setConfirm] = useState<'reset' | 'off' | null>(null)
+
+  useEffect(() => {
+    backend.kitchenLink().then(setLink, (e) => toast(friendlyError(e), 'error'))
+  }, [toast])
+
+  async function reset(enabled: boolean) {
+    setBusy(true)
+    try {
+      setLink(await backend.resetKitchenLink(enabled))
+      toast(enabled ? 'New kitchen link ready' : 'Kitchen screen turned off', 'success')
+      setConfirm(null)
+    } catch (e) {
+      toast(friendlyError(e), 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const url = link?.key ? `${publicSiteUrl()}/kitchen/${link.key}` : null
+  return (
+    <Section title="Kitchen screen" description="Show orders to the cooks on a tablet or TV: big tickets, no prices, no phone numbers. They can only start and finish orders.">
+      {!link ? (
+        <Spinner label="Loading" />
+      ) : !url ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <p className="flex-1 text-sm text-muted">Off. Create a link, then open it on the kitchen tablet (scan the QR code).</p>
+          <Button loading={busy} onClick={() => void reset(true)}>Create kitchen link</Button>
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-start gap-4">
+          <QrImage text={url} size={140} alt="QR code for the kitchen screen" className="rounded-lg ring-1 ring-line" />
+          <div className="min-w-0 flex-1 space-y-2">
+            <p className="text-sm">Scan with the kitchen tablet, or open this link there. Keep it private — anyone with it can see orders and mark them ready.</p>
+            <p className="truncate rounded-lg bg-sunken px-3 py-2 font-mono text-xs">{url}</p>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="secondary" onClick={() => navigator.clipboard?.writeText(url).then(() => toast('Link copied', 'success'), () => toast('Couldn’t copy', 'error'))}><IconCopy size={15} /> Copy</Button>
+              <a className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-field px-3 text-sm font-bold hover:bg-sunken" href={url} target="_blank" rel="noreferrer">Open <IconExternal size={14} /></a>
+              <Button size="sm" variant="ghost" onClick={() => setConfirm('reset')}>Make a new link</Button>
+              <Button size="sm" variant="ghost" className="text-danger" onClick={() => setConfirm('off')}>Turn off</Button>
+            </div>
+          </div>
+        </div>
+      )}
+      <Dialog
+        open={!!confirm}
+        onClose={() => setConfirm(null)}
+        title={confirm === 'off' ? 'Turn off the kitchen screen?' : 'Make a new kitchen link?'}
+        size="sm"
+        footer={
+          <div className="flex gap-2">
+            <Button variant="secondary" className="flex-1" onClick={() => setConfirm(null)}>Cancel</Button>
+            <Button variant={confirm === 'off' ? 'danger' : 'primary'} className="flex-1" loading={busy} onClick={() => void reset(confirm !== 'off')}>
+              {confirm === 'off' ? 'Turn off' : 'New link'}
+            </Button>
+          </div>
+        }
+      >
+        <p className="p-5 text-sm">The current link stops working straight away{confirm === 'off' ? '.' : '. Open the new link on the kitchen tablet.'} Use this if the link was shared by mistake.</p>
+      </Dialog>
+    </Section>
   )
 }
 

@@ -16,9 +16,15 @@ export function applyStock(menu: Menu, stock: StockLevel[]): Menu {
   }
 }
 
-/** "Only 3 left" once a tracked item reaches its low-stock level. */
-export function lowStockNote(itemId: string, stock: StockLevel[]): string | null {
+/** Units left once a tracked item reaches its low-stock level (null = plenty, or not tracked). */
+export function lowStockLeft(itemId: string, stock: StockLevel[]): number | null {
   const level = stock.find((s) => s.menu_item_id === itemId)
   if (!level || level.on_hand <= 0 || level.on_hand > Math.max(level.low_at, 0)) return null
-  return `Only ${level.on_hand} left`
+  return level.on_hand
+}
+
+/** "Only 3 left" once a tracked item reaches its low-stock level. */
+export function lowStockNote(itemId: string, stock: StockLevel[]): string | null {
+  const left = lowStockLeft(itemId, stock)
+  return left === null ? null : `Only ${left} left`
 }

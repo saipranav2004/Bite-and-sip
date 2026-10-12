@@ -1,9 +1,9 @@
 # Bite & Sip — Project State
 
-_Last updated: 11 Oct 2026 (IST)._
+_Last updated: 13 Oct 2026 (IST)._
 
 ## Current phase
-**Live on Vercel + Supabase. Iteration 3 adds the owner's business tools and a redesigned staff console.**
+**Live on Vercel + Supabase. Iteration 5 adds offers, pre-orders, push alerts, the kitchen screen, cash closing, shopping list, insights, feedback and Hindi/Telugu.**
 
 ## Completed
 - Research (reference projects, Supabase/UPI primary docs, yellow-and-black UI/UX research with contrast measurements).
@@ -36,6 +36,18 @@ _Last updated: 11 Oct 2026 (IST)._
   - optional recipes per menu item: automatic deduction on sale (one statement-level trigger per order, rows locked in id order), returned on cancel, never blocks ordering; recipe cost → "Use as cost"
   - table service: table QR orders are served at the table (big table label on the board, "Served at T5"), counter QR orders are collected
 
+- **Iteration 5:**
+  - offers (percent off, items, days, hours, dates) priced in SQL; `p_expected_total` refuses an order whose total changed since the student looked
+  - pre-orders (`scheduled_for`, 15–720 minutes ahead, same café day); board "later" strip; kitchen timing from the due time
+  - wait-time estimate (`kitchen_eta`: median time to ready over 14 days + queue)
+  - call staff from the table (`service_requests`, de-duplicated, rate-limited, live on the board)
+  - feedback after serving (`order_feedback`), owner Feedback page; Order again
+  - web push: dependency-free VAPID + aes128gcm Edge Function (checked against the RFC 8291 example), triggered after commit by pg_net; owner alerts (new order, UPI claim, table request) and student "ready" alerts in their language; subscriptions limited to real push services
+  - kitchen screen with a secret link (no prices/phones; can only start/finish orders); printable kitchen tickets
+  - daily cash closing with history; ingredient usage RPC → shopping list and expected-vs-actual usage check; menu engineering insights
+  - English / Hindi / Telugu student UI (Noto fonts loaded only when needed); veg-only filter; installable PWA (student and console manifests), offline page
+  - owner console and kitchen screen are code-split (student bundle 731 → 518 kB)
+
 ## Key decisions
 Counter pickup only · statuses `placed→preparing→ready→completed` + `cancelled` · payment `unpaid/paid` kept separate, with UPI "customer says paid" shown as a claim only · completion requires paid · paid→unpaid owner-only · device-generated 256-bit order secret (hash stored) for anonymous access · prices computed only in SQL · max 3 open orders per phone · IST business day · black = identity, yellow = action.
 
@@ -44,14 +56,16 @@ Counter pickup only · statuses `placed→preparing→ready→completed` + `canc
 |---|---|
 | Lint | 0 errors (style warnings only) |
 | Typecheck, build | pass |
-| Unit + component | 39/39 |
-| DB/security/business rules on local Supabase | 87/87 |
-| E2E demo (phone + desktop) | 30/30 |
-| E2E local Supabase (phone + desktop) | 30/30 |
+| Unit + component | 61/61 |
+| DB/security/business rules on local Supabase | 110/110 |
+| E2E demo (phone + desktop) | 46/46 |
+| E2E local Supabase (phone + desktop) | 46/46 |
+| Production push chain (DB event → Edge Function → Google push service) | verified with a test subscription, then removed |
 
 ## Outstanding
 1. Set a real UPI ID in Settings and test with ₹1 on a real phone.
 2. Change the simple starter passwords; print the table QR codes from the live domain.
 3. Enter item costs (Menu) and start logging expenses so Profit & loss reflects reality.
-4. Manual checks not automatable here: iOS Safari, real UPI apps, paper printing.
-5. Possible later: daily cash-closing report, refund tracking, CAPTCHA on ordering, phone-number retention job.
+4. Turn on alerts on the owner's phone (Settings → Alerts & app) and place a test order with the screen locked.
+5. Manual checks not automatable here: iOS Safari, real UPI apps, paper printing on the actual receipt printer, Hindi/Telugu wording review by a native speaker.
+6. Possible later: automatic UPI confirmation (payment gateway), refund tracking, CAPTCHA on ordering, phone-number retention job.

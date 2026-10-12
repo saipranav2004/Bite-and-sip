@@ -21,6 +21,8 @@
     "video:record": "node scripts/video/record.mjs http://localhost:4175 /tmp/bitesip-video && node scripts/video/overlays.mjs /tmp/bitesip-video && python3 scripts/video/compose.py /tmp/bitesip-video /tmp/bitesip-video/walkthrough.mp4"
   },
   "dependencies": {
+    "@fontsource-variable/noto-sans-devanagari": "^5.3.0",
+    "@fontsource-variable/noto-sans-telugu": "^5.3.0",
     "@fontsource-variable/plus-jakarta-sans": "^5.3.0",
     "@supabase/supabase-js": "^2.117.3",
     "qrcode": "^1.5.4",

@@ -1,19 +1,20 @@
 import { Link } from 'react-router-dom'
+import { useT } from '../i18n'
 import { IconBag, IconPin, IconReceipt } from './icons'
 import { Wordmark } from './ui'
 
-const STEPS = [
-  { icon: IconBag, title: 'Order from your seat', body: 'Pick your food and add notes for the kitchen.' },
-  { icon: IconReceipt, title: 'Pay your way', body: 'UPI from your phone, or cash.' },
-  { icon: IconPin, title: 'We bring it over', body: 'Ordered from a table QR? We serve it at your table. Otherwise collect it at the counter.' },
-]
-
 /** "How it works" plus café links, shown at the end of the student menu. */
 export function SiteFooter() {
+  const { t } = useT()
+  const STEPS = [
+    { icon: IconBag, title: t('footer.step1'), body: t('footer.step1Body') },
+    { icon: IconReceipt, title: t('footer.step2'), body: t('footer.step2Body') },
+    { icon: IconPin, title: t('footer.step3'), body: t('footer.step3Body') },
+  ]
   return (
     <footer className="mt-14 bg-ink text-white">
       <div className="mx-auto max-w-3xl px-4 pt-10 pb-32">
-        <h2 className="text-sm font-bold tracking-[0.25em] text-brand uppercase">How it works</h2>
+        <h2 className="text-sm font-bold tracking-[0.25em] text-brand uppercase">{t('footer.how')}</h2>
         <ol className="mt-5 grid gap-5 sm:grid-cols-3">
           {STEPS.map((s, i) => (
             <li key={s.title} className="flex gap-3 sm:flex-col">
@@ -32,11 +33,11 @@ export function SiteFooter() {
         <div className="mt-10 flex flex-wrap items-end justify-between gap-6 border-t border-white/10 pt-6">
           <Wordmark onDark className="text-lg" />
           <nav aria-label="Footer" className="flex flex-wrap gap-x-5 gap-y-2 text-sm font-semibold text-white/75">
-            <Link to="/orders" viewTransition className="hover:text-white">My orders</Link>
-            <Link to="/staff/login" className="hover:text-white">Staff login</Link>
+            <Link to="/orders" viewTransition className="hover:text-white">{t('footer.myOrders')}</Link>
+            <Link to="/staff/login" className="hover:text-white">{t('footer.staff')}</Link>
           </nav>
         </div>
-        <p className="mt-4 text-xs text-white/50">Bite &amp; Sip College Café · Table service and counter pickup · Prices include all charges.</p>
+        <p className="mt-4 text-xs text-white/50">{t('footer.note')}</p>
       </div>
     </footer>
   )

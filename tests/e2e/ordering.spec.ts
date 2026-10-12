@@ -57,7 +57,7 @@ test('student orders with UPI, kitchen verifies and hands over, student sees eac
   await expect(page.getByRole('img', { name: /UPI QR code to pay ₹70/ })).toBeVisible()
   await page.getByRole('button', { name: 'I’ve paid' }).click()
   await expect(page.getByText(/Waiting for the café to confirm your payment/)).toBeVisible()
-  await expect(page.getByText('UPI · check payment')).toBeVisible()
+  await expect(page.getByText('UPI · being checked')).toBeVisible()
 
   const staff = await staffPage(browser, page)
   await signIn(staff, KITCHEN)
@@ -189,7 +189,7 @@ test('reports reconcile and QR codes generate', async ({ page }) => {
 })
 
 test('pages fit the screen and pass automated accessibility checks', async ({ page }) => {
-  for (const path of ['/', '/cart', '/orders', '/staff/login']) {
+  for (const path of ['/', '/t/T3', '/cart', '/orders', '/staff/login']) {
     await page.goto(path)
     await page.waitForLoadState('networkidle')
     await expectNoHorizontalOverflow(page)
@@ -197,7 +197,10 @@ test('pages fit the screen and pass automated accessibility checks', async ({ pa
     expect(results.violations.map((v) => `${path}: ${v.id} (${v.nodes.length})`)).toEqual([])
   }
   await signIn(page, OWNER)
-  for (const path of ['/staff', '/staff/menu', '/staff/inventory', '/staff/reports', '/staff/profit', '/staff/expenses', '/staff/audit', '/staff/settings']) {
+  for (const path of [
+    '/staff', '/staff/menu', '/staff/inventory', '/staff/offers', '/staff/reports', '/staff/close-day', '/staff/profit', '/staff/expenses',
+    '/staff/insights', '/staff/feedback', '/staff/audit', '/staff/settings',
+  ]) {
     await page.goto(path)
     await page.waitForLoadState('networkidle')
     await expectNoHorizontalOverflow(page)
@@ -225,6 +228,12 @@ test('tablet and small-phone layouts do not overflow', async ({ page }) => {
     }
     await signIn(page, KITCHEN)
     for (const path of ['/staff', '/staff/menu', '/staff/inventory']) {
+      await page.goto(path)
+      await page.waitForLoadState('networkidle')
+      await expectNoHorizontalOverflow(page)
+    }
+    await signIn(page, OWNER)
+    for (const path of ['/staff/offers', '/staff/close-day', '/staff/insights', '/staff/feedback', '/staff/settings']) {
       await page.goto(path)
       await page.waitForLoadState('networkidle')
       await expectNoHorizontalOverflow(page)

@@ -1,4 +1,6 @@
 import type {
+  DayCloseInput, DayCloseSummary, DayClosing, FeedbackEntry, IngredientUsage, KitchenBoard, KitchenEta, Lang, Offer, OfferInput,
+  OfferStat, PushSubscriptionJson, ServiceKind, ServiceRequest,
   AuditEntry, AuditQuery, CafeSettings, Ingredient, IngredientAdjustKind, IngredientInput, IngredientMovement, Recipes, CafeTable, Category, Costs, CustomerOrder, Expense, ExpenseInput, Menu,
   OrderStatus, PlaceOrderInput, ProfitAndLossData, SalesSummary, StaffMember, StaffOrder, StaffProfile,
   StaffRole, StockAdjustKind, StockLevel, StockMovement,
@@ -12,6 +14,9 @@ export interface PublicData {
   tables: CafeTable[]
   /** Stock-tracked items only. */
   stock: StockLevel[]
+  offers: Offer[]
+  /** Wait-time estimate (null if it couldn't be loaded). */
+  eta: KitchenEta | null
 }
 
 export interface MenuItemInput {
@@ -53,6 +58,22 @@ export interface Backend {
   /** Notifies when the order changes. The callback carries no data: refetch with getOrder. */
   watchOrder(trackKey: string, onChange: () => void, onStatus: (s: LiveStatus) => void): () => void
   imageUrl(path: string | null): string | null
+  leaveFeedback(id: string, token: string, rating: number, comment: string | null): Promise<CustomerOrder>
+  requestService(table: string, kind: ServiceKind): Promise<ServiceRequest>
+  serviceRequestStatus(ids: string[]): Promise<ServiceRequest[]>
+
+  // Push notifications (null key = not set up)
+  pushPublicKey(): Promise<string | null>
+  subscribeOrderPush(id: string, token: string, sub: PushSubscriptionJson, lang: Lang): Promise<void>
+  subscribeStaffPush(sub: PushSubscriptionJson): Promise<void>
+  unsubscribePush(endpoint: string): Promise<void>
+  staffPushEnabled(endpoint: string): Promise<boolean>
+
+  // Kitchen screen (secret link)
+  kitchenBoard(key: string): Promise<KitchenBoard>
+  kitchenAdvance(key: string, orderId: string, to: 'preparing' | 'ready'): Promise<void>
+  /** Pings when the board changes (no data). */
+  watchKitchen(topic: string, onChange: () => void, onStatus: (s: LiveStatus) => void): () => void
 
   // Staff auth
   getStaffSession(): Promise<StaffProfile | null>
@@ -67,6 +88,10 @@ export interface Backend {
   setPayment(id: string, paid: boolean, reference?: string): Promise<StaffOrder>
   /** Notifies when any order changes. Refetch to stay authoritative. */
   watchOrders(onChange: (orderId: string | null) => void, onStatus: (s: LiveStatus) => void): () => void
+  /** Open help requests from tables (last 2 hours). */
+  listServiceRequests(): Promise<ServiceRequest[]>
+  resolveServiceRequest(id: string): Promise<void>
+  watchServiceRequests(onChange: () => void): () => void
 
   // Menu
   saveMenuItem(input: MenuItemInput): Promise<string>
@@ -118,6 +143,27 @@ export interface Backend {
   ): Promise<Ingredient>
   listIngredientMovements(id: string | null, limit?: number): Promise<IngredientMovement[]>
   getRecipes(): Promise<Recipes>
+
+  /** Owner: ingredient movements summed per ingredient for a date range. */
+  ingredientUsage(fromDay: string, toDay: string): Promise<IngredientUsage[]>
+
+  // Offers (owner)
+  listOffers(): Promise<Offer[]>
+  saveOffer(input: OfferInput): Promise<Offer>
+  deleteOffer(id: string): Promise<void>
+  offerStats(fromDay: string, toDay: string): Promise<OfferStat[]>
+
+  // Feedback (owner)
+  listFeedback(fromDay: string, toDay: string): Promise<FeedbackEntry[]>
+
+  // Daily cash closing (owner)
+  dayCloseSummary(day: string): Promise<DayCloseSummary>
+  closeDay(input: DayCloseInput): Promise<DayClosing>
+  listDayClosings(fromDay: string, toDay: string): Promise<DayClosing[]>
+
+  // Kitchen screen link (owner)
+  kitchenLink(): Promise<{ key: string | null; created_at: string | null }>
+  resetKitchenLink(enabled: boolean): Promise<{ key: string | null; created_at: string | null }>
 
   // Audit (owner)
   listAudit(query: AuditQuery): Promise<AuditEntry[]>

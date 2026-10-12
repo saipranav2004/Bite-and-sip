@@ -2,14 +2,18 @@ import { useId, useRef, useState } from 'react'
 import { FoodImage } from '../../components/FoodArt'
 import { IconX } from '../../components/icons'
 import { Button, Dialog, QuantityStepper, VegMark } from '../../components/ui'
+import { Price } from '../../components/Price'
+import { useMinuteClock } from '../../hooks/useMinuteClock'
+import { useT } from '../../i18n'
 import { money } from '../../lib/format'
 import { flyToCart } from '../../lib/motion'
-import { unitPrice } from '../../lib/pricing'
-import type { MenuItem } from '../../lib/types'
+import { offerPrice, unitPrice } from '../../lib/pricing'
+import type { MenuItem, Offer } from '../../lib/types'
 
 export function ItemSheet({
-  item, categoryName, open, onClose, onAdd, disabled, room = null,
+  item, categoryName, open, onClose, onAdd, disabled, room = null, offers = [],
 }: {
+  offers?: Offer[]
   /** Units of a tracked item still available after the cart (null = no limit). */
   room?: number | null
   item: MenuItem | null
@@ -25,9 +29,12 @@ export function ItemSheet({
   const titleId = useId()
   const photo = useRef<HTMLDivElement>(null)
   const noteId = useId()
+  const { t } = useT()
+  const clock = useMinuteClock()
 
   if (!item) return null
-  const each = unitPrice(item, addonIds)
+  const offer = offerPrice(item, offers, clock)
+  const each = unitPrice(item, addonIds) - offer.discount
   const max = room === null ? 20 : Math.min(20, room)
   const count = Math.min(qty, Math.max(1, max))
   const canAdd = item.is_available && !disabled && max > 0
@@ -37,6 +44,7 @@ export function ItemSheet({
       open={open}
       onClose={onClose}
       labelledBy={titleId}
+      closeLabel={t('item.close')}
       footer={
         <div className="flex items-center gap-3">
           <QuantityStepper value={count} onChange={setQty} max={Math.max(1, max)} label={item.name} />
@@ -50,7 +58,7 @@ export function ItemSheet({
               onClose()
             }}
           >
-            {!item.is_available ? 'Sold out' : max <= 0 ? 'No more left' : `Add to cart · ${money(each * count)}`}
+            {!item.is_available ? t('menu.soldOut') : max <= 0 ? t('item.noMore') : t('item.addToCart', { price: money(each * count) })}
           </Button>
         </div>
       }
@@ -61,7 +69,7 @@ export function ItemSheet({
           type="button"
           onClick={onClose}
           className="absolute top-3 right-3 grid size-10 place-items-center rounded-full bg-white/95 text-ink shadow"
-          aria-label="Close"
+          aria-label={t('item.close')}
         >
           <IconX />
         </button>
@@ -69,18 +77,19 @@ export function ItemSheet({
       <div className="space-y-5 px-5 py-5">
         <div>
           <div className="flex items-center gap-2">
-            <VegMark veg={item.is_veg} />
-            {item.is_popular && <span className="rounded-full bg-brand-soft px-2 py-0.5 text-xs font-bold">Popular</span>}
+            <VegMark veg={item.is_veg} label={t(item.is_veg ? 'item.veg' : 'item.nonVeg')} />
+            {item.is_popular && <span className="rounded-full bg-brand-soft px-2 py-0.5 text-xs font-bold">{t('menu.popularTag')}</span>}
+            {offer.offer && <span className="rounded-full bg-brand px-2 py-0.5 text-xs font-extrabold">{offer.offer.title} · {t('menu.off', { percent: offer.offer.percent_off })}</span>}
           </div>
           <h2 id={titleId} className="mt-2 text-2xl font-extrabold tracking-tight">{item.name}</h2>
-          <p className="tabular mt-1 text-lg font-bold">{money(item.price)}</p>
+          <p className="mt-1 text-lg"><Price price={offer.price} was={offer.was} /></p>
           {item.description && <p className="mt-2 text-[15px] text-muted">{item.description}</p>}
         </div>
 
         {item.addons.length > 0 && (
           <fieldset>
             <legend className="text-sm font-extrabold">
-              Add-ons <span className="font-semibold text-muted">(optional)</span>
+              {t('item.addons')} <span className="font-semibold text-muted">{t('item.optional')}</span>
             </legend>
             <div className="mt-2 divide-y divide-line rounded-2xl border border-line">
               {item.addons.map((a) => {
@@ -95,7 +104,7 @@ export function ItemSheet({
                       onChange={(e) => setAddonIds((ids) => (e.target.checked ? [...ids, a.id] : ids.filter((x) => x !== a.id)))}
                     />
                     <span className="flex-1 font-semibold">{a.name}</span>
-                    <span className="tabular text-sm font-bold text-muted">{a.is_available ? (a.price ? `+${money(a.price)}` : 'Free') : 'Sold out'}</span>
+                    <span className="tabular text-sm font-bold text-muted">{a.is_available ? (a.price ? `+${money(a.price)}` : t('item.free')) : t('menu.soldOut')}</span>
                   </label>
                 )
               })}
@@ -105,13 +114,13 @@ export function ItemSheet({
 
         <div>
           <label htmlFor={noteId} className="text-sm font-extrabold">
-            Note for the kitchen <span className="font-semibold text-muted">(optional)</span>
+            {t('item.note')} <span className="font-semibold text-muted">{t('item.optional')}</span>
           </label>
           <textarea
             id={noteId}
             className="field-input mt-2 min-h-20 resize-none"
             maxLength={120}
-            placeholder="e.g. less spicy, no onion"
+            placeholder={t('item.notePlaceholder')}
             value={note}
             onChange={(e) => setNote(e.target.value)}
           />

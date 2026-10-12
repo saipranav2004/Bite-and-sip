@@ -78,8 +78,8 @@ const PAYMENT_STYLE: Record<PaymentDisplay, string> = {
   paid: 'bg-ready-soft text-ready',
 }
 
-export function PaymentBadge({ display, method }: { display: PaymentDisplay; method?: 'cash' | 'upi' }) {
-  const label = display === 'paid' && method ? `Paid · ${method === 'cash' ? 'Cash' : 'UPI'}` : PAYMENT_LABEL[display]
+export function PaymentBadge({ display, method, label: text }: { display: PaymentDisplay; method?: 'cash' | 'upi'; label?: string }) {
+  const label = text ?? (display === 'paid' && method ? `Paid · ${method === 'cash' ? 'Cash' : 'UPI'}` : PAYMENT_LABEL[display])
   return (
     <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-bold ${PAYMENT_STYLE[display]}`}>
       {display === 'paid' && <IconCheck size={13} strokeWidth={3} />}
@@ -89,10 +89,11 @@ export function PaymentBadge({ display, method }: { display: PaymentDisplay; met
   )
 }
 
-export function VegMark({ veg }: { veg: boolean }) {
+export function VegMark({ veg, label }: { veg: boolean; label?: string }) {
+  const text = label ?? (veg ? 'Vegetarian' : 'Non-vegetarian')
   return (
     <span
-      title={veg ? 'Vegetarian' : 'Non-vegetarian'}
+      title={text}
       className={`inline-flex size-4 shrink-0 items-center justify-center rounded-[3px] border-[1.5px] bg-white ${veg ? 'border-veg' : 'border-nonveg'}`}
     >
       {veg ? (
@@ -100,7 +101,7 @@ export function VegMark({ veg }: { veg: boolean }) {
       ) : (
         <span className="size-0 border-x-[4px] border-b-[7px] border-x-transparent border-b-nonveg" />
       )}
-      <span className="sr-only">{veg ? 'Vegetarian' : 'Non-vegetarian'}</span>
+      <span className="sr-only">{text}</span>
     </span>
   )
 }
@@ -194,7 +195,7 @@ export function Switch({
 
 // ---- Dialog / bottom sheet ------------------------------------------------------
 export function Dialog({
-  open, onClose, title, children, footer, size = 'md', sheet = true, drawer = false, labelledBy, description,
+  open, onClose, title, children, footer, size = 'md', sheet = true, drawer = false, labelledBy, description, closeLabel = 'Close',
 }: {
   open: boolean
   onClose: () => void
@@ -208,6 +209,7 @@ export function Dialog({
   drawer?: boolean
   labelledBy?: string
   description?: ReactNode
+  closeLabel?: string
 }) {
   const ref = useRef<HTMLDialogElement>(null)
   const titleId = useId()
@@ -265,7 +267,7 @@ export function Dialog({
                 <h2 id={titleId} className="text-lg font-extrabold">{title}</h2>
                 {description && <p className="mt-0.5 text-sm text-muted">{description}</p>}
               </div>
-              <button type="button" onClick={onClose} className="-m-2 grid size-10 shrink-0 place-items-center rounded-full hover:bg-sunken" aria-label="Close">
+              <button type="button" onClick={onClose} className="-m-2 grid size-10 shrink-0 place-items-center rounded-full hover:bg-sunken" aria-label={closeLabel}>
                 <IconX />
               </button>
             </div>

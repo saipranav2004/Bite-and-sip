@@ -6,6 +6,7 @@ import { Banner, Button, Dialog, EmptyState, useToast } from '../../components/u
 import { friendlyError } from '../../lib/errors'
 import { readJson, writeJson } from '../../lib/storage'
 import { IngredientsPanel } from './IngredientsPanel'
+import { ShoppingListPanel, UsageCheckPanel } from './ShoppingPanels'
 import { ago, dateTime, money } from '../../lib/format'
 import type { MenuItem, StockAdjustKind, StockLevel, StockMovement } from '../../lib/types'
 import { usePublicData } from '../../state/publicData'
@@ -32,7 +33,7 @@ export const MOVEMENT_LABEL: Record<StockMovement['kind'], string> = {
 
 const WASTE_REASONS = ['Unsold at closing', 'Dropped or damaged', 'Expired', 'Made wrong']
 
-type Tab = 'raw' | 'ready'
+type Tab = 'raw' | 'shopping' | 'usage' | 'ready'
 
 export function InventoryPage() {
   const { profile } = useStaffSession()
@@ -50,13 +51,20 @@ export function InventoryPage() {
         subtitle={
           current === 'raw'
             ? 'Raw materials like milk, maida and tea powder: what you bought, used and have left.'
-            : 'Items you make in batches, like samosas. Tracked items sell out by themselves at zero.'
+            : current === 'shopping'
+              ? 'What to buy next, so nothing runs out.'
+              : current === 'usage'
+                ? 'Are ingredients being used the way your recipes say?'
+                : 'Items you make in batches, like samosas. Tracked items sell out by themselves at zero.'
         }
       />
       {owner && (
-        <div className="mb-4 inline-flex gap-1 rounded-lg border border-line bg-surface p-1" role="tablist" aria-label="Inventory type">
+        <div className="-mx-4 mb-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+        <div className="inline-flex gap-1 rounded-lg border border-line bg-surface p-1" role="tablist" aria-label="Inventory">
           {([
             ['raw', 'Raw materials'],
+            ['shopping', 'Shopping list'],
+            ['usage', 'Usage check'],
             ['ready', 'Ready-made items'],
           ] as [Tab, string][]).map(([t, label]) => (
             <button
@@ -65,14 +73,15 @@ export function InventoryPage() {
               role="tab"
               aria-selected={current === t}
               onClick={() => setTab(t)}
-              className={`min-h-9 rounded-md px-3.5 text-sm font-semibold ${current === t ? 'bg-ink text-white' : 'text-ink-2 hover:bg-sunken'}`}
+              className={`min-h-9 shrink-0 rounded-md px-3.5 text-sm font-semibold whitespace-nowrap ${current === t ? 'bg-ink text-white' : 'text-ink-2 hover:bg-sunken'}`}
             >
               {label}
             </button>
           ))}
         </div>
+        </div>
       )}
-      {current === 'raw' ? <IngredientsPanel /> : <ReadyItemsPanel />}
+      {current === 'raw' ? <IngredientsPanel /> : current === 'shopping' ? <ShoppingListPanel /> : current === 'usage' ? <UsageCheckPanel /> : <ReadyItemsPanel />}
     </PageBody>
   )
 }

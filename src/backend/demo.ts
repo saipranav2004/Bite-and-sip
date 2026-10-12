@@ -11,7 +11,10 @@ import { computeProfitAndLoss } from '../lib/pnl'
 import { MAX_LINES, MAX_QTY_PER_LINE, MAX_UNITS } from '../lib/pricing'
 import { summarize } from '../lib/reports'
 import { readJson, writeJson } from '../lib/storage'
+import { bestOffer, cafeClock, discountFor } from '../lib/offers'
+import { isDue } from '../lib/schedule'
 import type {
+  DayCloseSummary, DayClosing, FeedbackEntry, IngredientUsage, KitchenEta, KitchenTicket, Offer, OfferStat, ServiceKind, ServiceRequest,
   AuditEntry, Ingredient, IngredientMovement, Recipes, CafeSettings, CafeTable, Category, Costs, CustomerOrder, Expense, ExpenseInput, MenuItem, OrderLine,
   PaymentMethod, PlaceOrderInput, StaffMember, StaffOrder, StaffProfile, StaffRole, StockLevel, StockMovement,
 } from '../lib/types'
@@ -20,7 +23,7 @@ import { isValidUpiId } from '../lib/upi'
 import { bundledImage, isBundledImage } from '../lib/images'
 import type { Backend, LiveStatus, MenuItemInput, PublicData } from './types'
 
-const STORE_KEY = 'bitesip-demo-v4'
+const STORE_KEY = 'bitesip-demo-v5'
 const SESSION_KEY = 'bitesip-demo-session'
 
 export const DEMO_ACCOUNTS = [
@@ -51,7 +54,7 @@ interface DemoAccount {
 }
 
 interface Store {
-  version: 4
+  version: 5
   settings: CafeSettings
   categories: Category[]
   items: MenuItem[]
@@ -69,6 +72,11 @@ interface Store {
   ingredients: Ingredient[]
   ingredientMoves: IngredientMovement[]
   recipes: Recipes
+  offers: Offer[]
+  feedback: Record<string, { rating: number; comment: string | null; created_at: string }>
+  help: ServiceRequest[]
+  closings: DayClosing[]
+  kitchen: { key: string; topic: string; created_at: string } | null
 }
 
 const delay = (ms = 120) => new Promise((r) => setTimeout(r, ms))
@@ -114,10 +122,14 @@ function prng(seed: number) {
 
 const FIRST_NAMES = ['Nikitha', 'Arjun', 'Priya', 'Rahul', 'Sneha', 'Karthik', 'Divya', 'Vikram', 'Ananya', 'Rohan', 'Meera', 'Aditya']
 
-function buildLine(item: MenuItem, qty: number, addonIds: string[], note: string | null): OrderLine {
+function buildLine(item: MenuItem, qty: number, addonIds: string[], note: string | null, offer: Offer | null = null): OrderLine {
   const addons = item.addons.filter((a) => addonIds.includes(a.id)).map((a) => ({ id: a.id, name: a.name, price: a.price }))
-  const unit = item.price + addons.reduce((s, a) => s + a.price, 0)
-  return { name: item.name, base_price: item.price, addons, unit_price: unit, quantity: qty, line_total: unit * qty, note }
+  const discount = offer ? discountFor(item.price, offer.percent_off) : 0
+  const unit = item.price - discount + addons.reduce((s, a) => s + a.price, 0)
+  return {
+    menu_item_id: item.id, name: item.name, base_price: item.price, addons, discount, offer_title: discount > 0 ? offer!.title : null,
+    unit_price: unit, quantity: qty, line_total: unit * qty, note,
+  }
 }
 
 function lineCost(costs: Costs, item: MenuItem, addonIds: string[]): number | null {
@@ -169,6 +181,7 @@ function seedOrders(items: MenuItem[], costs: Costs): { orders: DemoOrder[]; nex
       item_count: lines.reduce((s, l) => s + l.quantity, 0),
       cancel_reason: status === 'cancelled' ? 'Item ran out' : null,
       cancelled_by: status === 'cancelled' ? 'staff' : null,
+      scheduled_for: null,
       created_at: created,
       updated_at: created,
       preparing_at: status !== 'placed' && status !== 'cancelled' && reached('preparing') ? step(2) : null,
@@ -278,7 +291,7 @@ function seedBusiness(items: MenuItem[], costs: Costs) {
 }
 
 /** Sample raw materials and recipes (quantities in g / ml / pieces / packets). */
-function seedIngredients(items: MenuItem[], nextId: number) {
+function seedIngredients(items: MenuItem[], nextId: number, orders: DemoOrder[]) {
   const today = cafeDate()
   const at = (day: string, hour: number) => new Date(new Date(cafeDayStartIso(day)).getTime() + hour * 3600000).toISOString()
   const list: [string, Ingredient['base_unit'], Ingredient['display_unit'], number, number, number][] = [
@@ -299,14 +312,6 @@ function seedIngredients(items: MenuItem[], nextId: number) {
     id: uuid(), name, base_unit, display_unit, on_hand, low_at, cost_per_unit: cost, is_active: true, updated_at: at(today, 9),
   }))
   const ing = (n: string) => ingredients.find((i) => i.name === n)!
-  const moves: IngredientMovement[] = []
-  for (const i of ingredients) {
-    const bought = i.base_unit === 'packet' ? 20 : i.base_unit === 'pcs' ? 60 : i.on_hand * 2
-    moves.push({ id: id++, ingredient_id: i.id, ingredient_name: i.name, kind: 'opening', delta: 0, on_hand_after: 0, unit_cost: null, amount: null, order_id: null, note: null, actor_name: 'Asha (Owner)', created_at: at(addDays(today, -6), 8) })
-    moves.push({ id: id++, ingredient_id: i.id, ingredient_name: i.name, kind: 'purchase', delta: bought, on_hand_after: bought, unit_cost: i.cost_per_unit, amount: Math.round(bought * (i.cost_per_unit ?? 0)), order_id: null, note: null, actor_name: 'Asha (Owner)', created_at: at(addDays(today, -6), 8.2) })
-    moves.push({ id: id++, ingredient_id: i.id, ingredient_name: i.name, kind: 'count', delta: i.on_hand - bought, on_hand_after: i.on_hand, unit_cost: null, amount: null, order_id: null, note: 'Morning count', actor_name: 'Asha (Owner)', created_at: at(today, 8.5) })
-  }
-  moves.push({ id: id++, ingredient_id: ing('Milk').id, ingredient_name: 'Milk', kind: 'waste', delta: -500, on_hand_after: 8000, unit_cost: 0.06, amount: null, order_id: null, note: 'Spoiled', actor_name: 'Asha (Owner)', created_at: at(addDays(today, -2), 19) })
   const byName = (n: string) => items.find((i) => i.name === n)
   const recipe: [string, [string, number][]][] = [
     ['Masala Chai', [['Milk', 100], ['Tea powder', 4], ['Sugar', 10]]],
@@ -318,6 +323,41 @@ function seedIngredients(items: MenuItem[], nextId: number) {
     ['Crispy Samosa', [['Maida', 60], ['Potato', 80], ['Oil', 30]]],
     ['Paneer Wrap', [['Paneer', 60], ['Maida', 50], ['Oil', 10]]],
   ]
+  // What the sample orders of the last 6 days used, per ingredient per day (through recipes).
+  const since = cafeDayStartIso(addDays(today, -6))
+  const perDay = new Map<string, Map<string, number>>()
+  for (const o of orders) {
+    if (o.status === 'cancelled' || o.created_at < since) continue
+    const day = cafeDate(new Date(o.created_at))
+    for (const l of o.items) {
+      const r = recipe.find(([n]) => n === l.name)
+      if (!r) continue
+      for (const [n, q] of r[1]) {
+        const m = perDay.get(n) ?? new Map<string, number>()
+        m.set(day, (m.get(day) ?? 0) + q * l.quantity)
+        perDay.set(n, m)
+      }
+    }
+  }
+  // Small, believable count gaps (milk spills, oil top-ups); the rest match.
+  const GAP: Record<string, number> = { Milk: 0.06, Oil: 0.12, 'Tea powder': 0.03 }
+  const moves: IngredientMovement[] = []
+  const r3 = (n: number) => Math.round(n * 1000) / 1000
+  for (const i of ingredients) {
+    const days = perDay.get(i.name) ?? new Map<string, number>()
+    const used = [...days.values()].reduce((a, b) => a + b, 0)
+    const gap = r3(used * (GAP[i.name] ?? 0))
+    const bought = r3(i.on_hand + used + gap)
+    let level = 0
+    const push = (kind: IngredientMovement['kind'], delta: number, created: string, extra: Partial<IngredientMovement> = {}) => {
+      level = r3(level + delta)
+      moves.push({ id: id++, ingredient_id: i.id, ingredient_name: i.name, kind, delta, on_hand_after: level, unit_cost: null, amount: null, order_id: null, note: null, actor_name: 'Asha (Owner)', created_at: created, ...extra })
+    }
+    push('opening', 0, at(addDays(today, -7), 8))
+    push('purchase', bought, at(addDays(today, -7), 8.2), { unit_cost: i.cost_per_unit, amount: Math.round(bought * (i.cost_per_unit ?? 0)) })
+    for (const [day, q] of [...days.entries()].sort()) push('sale', -r3(q), at(day, 18), { actor_name: 'Customer' })
+    push('count', -gap, at(today, 8.5), { note: 'Morning count' })
+  }
   const recipes: Recipes = {}
   for (const [item, lines] of recipe) {
     const m = byName(item)
@@ -326,15 +366,66 @@ function seedIngredients(items: MenuItem[], nextId: number) {
   return { ingredients, ingredientMoves: moves, recipes, nextId: id }
 }
 
+/** Sample offers, feedback, a help request and cash closings. */
+function seedExtras(items: MenuItem[], orders: DemoOrder[]) {
+  const byName = (n: string) => items.find((i) => i.name === n)?.id
+  const ids = (...names: string[]) => names.map(byName).filter((x): x is string => !!x)
+  const offers: Offer[] = [
+    {
+      id: uuid(), title: 'Cool-down hour', percent_off: 20, menu_item_ids: ids('Cold Coffee', 'Chocolate Shake', 'Fresh Lime Soda'),
+      days: [], starts_at: '15:00:00', ends_at: '18:00:00', valid_from: null, valid_to: null, is_active: true,
+    },
+    {
+      id: uuid(), title: 'Combo Monday', percent_off: 10, menu_item_ids: ids('Maggi + Chai Combo', 'Samosa + Chai Combo'),
+      days: [1], starts_at: '00:00:00', ends_at: '24:00:00', valid_from: null, valid_to: null, is_active: true,
+    },
+  ]
+  const rand = prng(777)
+  const comments = ['Maggi was perfect!', 'Chai could be hotter', 'Quick service, thanks', 'Loved the cold coffee', 'Took a bit long today', null, null, null]
+  const feedback: Store['feedback'] = {}
+  for (const o of orders) {
+    if (o.status !== 'completed' || rand() > 0.35) continue
+    const r = rand()
+    feedback[o.id] = {
+      rating: r < 0.55 ? 5 : r < 0.85 ? 4 : r < 0.95 ? 3 : 2,
+      comment: comments[Math.floor(rand() * comments.length)],
+      created_at: new Date(new Date(o.completed_at!).getTime() + 15 * 60000).toISOString(),
+    }
+  }
+  const today = cafeDate()
+  const closings: DayClosing[] = []
+  for (let d = 5; d >= 1; d--) {
+    const day = addDays(today, -d)
+    const start = cafeDayStartIso(day)
+    const end = cafeDayStartIso(addDays(day, 1))
+    const paid = orders.filter((o) => o.paid_at && o.paid_at >= start && o.paid_at < end)
+    const cash = paid.filter((o) => o.payment_method === 'cash').reduce((n, o) => n + o.total, 0)
+    const upi = paid.filter((o) => o.payment_method === 'upi').reduce((n, o) => n + o.total, 0)
+    const paidOut = d % 2 ? 200 : 0
+    const expected = 500 + cash - paidOut
+    const diff = d === 3 ? -40 : 0
+    closings.push({
+      day, opening_float: 500, cash_received: cash, cash_paid_out: paidOut, expected_cash: expected, counted_cash: expected + diff,
+      difference: diff, upi_received: upi, note: diff ? 'Short by ₹40 — change given wrong?' : null, closed_by_name: 'Asha (Owner)',
+      closed_at: new Date(new Date(end).getTime() - 3 * 3600000).toISOString(),
+    })
+  }
+  const help: ServiceRequest[] = [
+    { id: uuid(), table_label: 'T4', kind: 'water', created_at: new Date(Date.now() - 2 * 60000).toISOString(), resolved_at: null },
+  ]
+  return { offers, feedback, closings, help, kitchen: null }
+}
+
 function freshStore(): Store {
   const menu = seedMenu()
   const costs = seedCosts(menu.items)
   const { orders, next } = seedOrders(menu.items, costs)
   const business = seedBusiness(menu.items, costs)
-  const raw = seedIngredients(menu.items, business.nextId)
+  const raw = seedIngredients(menu.items, business.nextId, orders)
+  const extras = seedExtras(menu.items, orders)
   const created = new Date(Date.now() - 30 * 86400000).toISOString()
   return {
-    version: 4,
+    version: 5,
     settings: { ...catalog.settings, updated_at: now() },
     categories: menu.categories,
     items: menu.items,
@@ -348,12 +439,13 @@ function freshStore(): Store {
     costs,
     ...business,
     ...raw,
+    ...extras,
   }
 }
 
 function load(): Store {
   const s = readJson<Store | null>(STORE_KEY, null)
-  if (s && s.version === 4) return s
+  if (s && s.version === 5) return s
   const fresh = freshStore()
   writeJson(STORE_KEY, fresh)
   return fresh
@@ -397,15 +489,80 @@ function mutate<T>(fn: (s: Store) => T, orderId: string | null = null): T {
 }
 
 // ---- helpers ---------------------------------------------------------------
-function toCustomer(o: DemoOrder): CustomerOrder {
+function toCustomer(o: DemoOrder, feedback: Store['feedback'] = load().feedback): CustomerOrder {
   return {
     id: o.id, order_no: o.order_no, customer_name: o.customer_name, phone_last4: o.customer_phone.slice(-4),
     table_label: o.table_label, status: o.status, payment_method: o.payment_method, payment_status: o.payment_status,
     customer_reported_paid_at: o.customer_reported_paid_at, total: o.total, item_count: o.item_count,
-    cancel_reason: o.cancel_reason, cancelled_by: o.cancelled_by, track_key: o.track_key, created_at: o.created_at,
-    updated_at: o.updated_at, preparing_at: o.preparing_at, ready_at: o.ready_at, completed_at: o.completed_at,
+    cancel_reason: o.cancel_reason, cancelled_by: o.cancelled_by, track_key: o.track_key, scheduled_for: o.scheduled_for,
+    created_at: o.created_at, updated_at: o.updated_at, preparing_at: o.preparing_at, ready_at: o.ready_at, completed_at: o.completed_at,
     cancelled_at: o.cancelled_at, paid_at: o.paid_at, items: clone(o.items),
+    feedback: feedback[o.id] ? { rating: feedback[o.id].rating, comment: feedback[o.id].comment } : null,
   }
+}
+
+/** Mirrors public.kitchen_eta(). */
+function kitchenEta(s: Store): KitchenEta {
+  const since = Date.now() - 14 * 86400000
+  const mins = s.orders
+    .filter((o) => o.ready_at && Date.parse(o.created_at) > since)
+    .sort((a, b) => b.ready_at!.localeCompare(a.ready_at!))
+    .slice(0, 60)
+    .map((o) => {
+      const start = Math.max(Date.parse(o.created_at), o.scheduled_for ? Date.parse(o.scheduled_for) - 15 * 60000 : 0)
+      return (Date.parse(o.ready_at!) - start) / 60000
+    })
+    .filter((m) => m > 0 && m < 120)
+    .sort((a, b) => a - b)
+  const mid = mins.length ? (mins.length % 2 ? mins[(mins.length - 1) / 2] : (mins[mins.length / 2 - 1] + mins[mins.length / 2]) / 2) : 8
+  const typical = Math.min(30, Math.max(3, Math.round(mid)))
+  const queue = s.orders.filter((o) => (o.status === 'placed' || o.status === 'preparing') && isDue(o.scheduled_for)).length
+  return { queue, typical_minutes: typical, minutes: Math.min(60, Math.max(5, typical + Math.max(queue - 1, 0) * 2)), samples: mins.length }
+}
+
+function kitchenTickets(s: Store): KitchenTicket[] {
+  const cutoff = new Date(Date.now() - 2 * 3600000).toISOString()
+  return s.orders
+    .filter((o) => o.status === 'placed' || o.status === 'preparing' || (o.status === 'ready' && (o.ready_at ?? '') > cutoff))
+    .sort((a, b) => {
+      const at = (o: DemoOrder) => (o.scheduled_for ? new Date(Date.parse(o.scheduled_for) - 15 * 60000).toISOString() : o.created_at)
+      return at(a).localeCompare(at(b)) || a.order_no - b.order_no
+    })
+    .map((o) => ({
+      id: o.id, order_no: o.order_no, customer_name: o.customer_name.split(' ')[0], table_label: o.table_label,
+      status: o.status as KitchenTicket['status'], scheduled_for: o.scheduled_for, created_at: o.created_at,
+      preparing_at: o.preparing_at, ready_at: o.ready_at,
+      items: o.items.map((l) => ({ name: l.name, quantity: l.quantity, note: l.note, addons: l.addons.map((a) => a.name) })),
+    }))
+}
+
+function daySummary(s: Store, day: string): DayCloseSummary {
+  if (day > cafeDate()) throw new AppError('invalid_range')
+  const start = cafeDayStartIso(day)
+  const end = cafeDayStartIso(addDays(day, 1))
+  const inDay = (t: string | null) => !!t && t >= start && t < end
+  const paid = s.orders.filter((o) => inDay(o.paid_at))
+  const created = s.orders.filter((o) => inDay(o.created_at))
+  const sum = (xs: DemoOrder[]) => xs.reduce((n, o) => n + o.total, 0)
+  const cash = paid.filter((o) => o.payment_method === 'cash')
+  const upi = paid.filter((o) => o.payment_method === 'upi')
+  const unpaid = created.filter((o) => o.status !== 'cancelled' && o.payment_status === 'unpaid')
+  const before = s.closings.filter((c) => c.day < day).sort((a, b) => b.day.localeCompare(a.day))[0]
+  const summary: DayCloseSummary = {
+    day,
+    cash_received: sum(cash), cash_orders: cash.length, upi_received: sum(upi), upi_orders: upi.length,
+    cash_refunds_due: sum(s.orders.filter((o) => o.payment_method === 'cash' && o.status === 'cancelled' && o.payment_status === 'paid' && inDay(o.cancelled_at))),
+    unpaid_orders: unpaid.length, unpaid_total: sum(unpaid),
+    open_orders: created.filter((o) => OPEN_STATUSES.includes(o.status)).length,
+    expenses: s.expenses.filter((e) => e.spent_on === day).reduce((n, e) => n + e.amount, 0),
+    closing: clone(s.closings.find((c) => c.day === day) ?? null),
+    last_float: before?.opening_float ?? null,
+  }
+  return summary
+}
+
+function requireKitchen(s: Store, key: string) {
+  if (!s.kitchen || s.kitchen.key !== key) throw new AppError('invalid_kitchen_link')
 }
 
 function toStaff(o: DemoOrder): StaffOrder {
@@ -531,6 +688,8 @@ export function createDemoBackend(): Backend {
         menu: { categories: clone(s.categories).sort((a, b) => a.sort_order - b.sort_order), items: clone(s.items).sort((a, b) => a.sort_order - b.sort_order) },
         tables: clone(s.tables),
         stock: clone(s.stock),
+        offers: clone(s.offers.filter((o) => o.is_active)),
+        eta: kitchenEta(s),
       }
     },
 
@@ -551,10 +710,16 @@ export function createDemoBackend(): Backend {
         if (input.payment_method === 'upi' && !s.settings.upi_id) throw new AppError('upi_unavailable')
         let table = normalizeTableLabel(input.table_label)
         if (table && !s.tables.some((t) => t.label === table && t.is_active)) table = null
+        const scheduled = input.scheduled_for ? new Date(Math.floor(Date.parse(input.scheduled_for) / 60000) * 60000) : null
+        if (scheduled) {
+          const ms = scheduled.getTime() - Date.now()
+          if (!(ms >= 14 * 60000 && ms <= 12 * 3600000 && cafeDate(scheduled) === cafeDate())) throw new AppError('invalid_pickup_time')
+        }
         if (!input.items.length || input.items.length > MAX_LINES) throw new AppError('invalid_items')
         const open = s.orders.filter((o) => o.customer_phone === phone && OPEN_STATUSES.includes(o.status)).length
         if (open >= 3) throw new AppError('too_many_open_orders')
 
+        const clock = cafeClock()
         const lineCosts: (number | null)[] = []
         const wanted = new Map<string, { item: MenuItem; qty: number }>()
         const lines: OrderLine[] = input.items.map((l) => {
@@ -571,10 +736,14 @@ export function createDemoBackend(): Backend {
           const w = wanted.get(item.id) ?? { item, qty: 0 }
           w.qty += l.quantity
           wanted.set(item.id, w)
-          return buildLine(item, l.quantity, l.addon_ids, note || null)
+          return buildLine(item, l.quantity, l.addon_ids, note || null, bestOffer(item.id, s.offers, clock))
         })
         const units = lines.reduce((x, l) => x + l.quantity, 0)
         if (units > MAX_UNITS) throw new AppError('invalid_quantity')
+        const total = lines.reduce((x, l) => x + l.line_total, 0)
+        if (input.expected_total != null && input.expected_total !== total) {
+          throw new AppError('prices_changed', `Prices just changed — your new total is ₹${total}. Please check your cart and place the order again.`)
+        }
 
         const short = [...wanted.values()]
           .map((w) => ({ ...w, level: s.stock.find((x) => x.menu_item_id === w.item.id) }))
@@ -589,8 +758,8 @@ export function createDemoBackend(): Backend {
         const order: DemoOrder = {
           id: uuid(), order_no: s.nextOrderNo++, customer_name: name, customer_phone: phone, table_label: table,
           status: 'placed', payment_method: input.payment_method, payment_status: 'unpaid', customer_reported_paid_at: null,
-          payment_reference: null, total: lines.reduce((x, l) => x + l.line_total, 0), item_count: units,
-          cancel_reason: null, cancelled_by: null, created_at: created, updated_at: created, preparing_at: null,
+          payment_reference: null, total, item_count: units,
+          cancel_reason: null, cancelled_by: null, scheduled_for: scheduled ? scheduled.toISOString() : null, created_at: created, updated_at: created, preparing_at: null,
           ready_at: null, completed_at: null, cancelled_at: null, paid_at: null, items: lines, line_costs: lineCosts,
           token: input.access_token, track_key: uuid(), client_request_id: input.client_request_id,
         }
@@ -669,6 +838,85 @@ export function createDemoBackend(): Backend {
     imageUrl(path) {
       if (isBundledImage(path)) return bundledImage(path)!.src
       return path && path.startsWith('data:') ? path : null
+    },
+
+    async leaveFeedback(id, token, rating, comment) {
+      await delay()
+      return mutate((s) => {
+        const o = findCustomerOrder(s, id, token)
+        if (o.status !== 'completed') throw new AppError('not_allowed')
+        if (Date.now() - Date.parse(o.completed_at!) > 3 * 86400000) throw new AppError('feedback_closed')
+        if (!Number.isInteger(rating) || rating < 1 || rating > 5) throw new AppError('invalid_rating')
+        const c = comment ? cleanText(comment) : ''
+        if (c.length > 300) throw new AppError('invalid_note')
+        s.feedback[o.id] = { rating, comment: c || null, created_at: s.feedback[o.id]?.created_at ?? now() }
+        return toCustomer(o, s.feedback)
+      }, id)
+    },
+
+    async requestService(table, kind) {
+      await delay()
+      return mutate((s) => {
+        const label = normalizeTableLabel(table)
+        if (!['water', 'cutlery', 'clean', 'bill', 'help'].includes(kind)) throw new AppError('invalid_request')
+        if (!label || !s.tables.some((t) => t.label === label && t.is_active)) throw new AppError('table_not_found')
+        if (!s.settings.is_open) throw new AppError('cafe_closed')
+        const open = s.help.find((h) => h.table_label === label && h.kind === kind && !h.resolved_at && Date.now() - Date.parse(h.created_at) < 30 * 60000)
+        if (open) return clone(open)
+        if (s.help.filter((h) => h.table_label === label && Date.now() - Date.parse(h.created_at) < 10 * 60000).length >= 6) {
+          throw new AppError('too_many_requests')
+        }
+        const r: ServiceRequest = { id: uuid(), table_label: label, kind: kind as ServiceKind, created_at: now(), resolved_at: null }
+        s.help.push(r)
+        return clone(r)
+      })
+    },
+
+    async serviceRequestStatus(ids) {
+      await delay(60)
+      return clone(load().help.filter((h) => ids.slice(0, 10).includes(h.id)))
+    },
+
+    async pushPublicKey() {
+      return null
+    },
+    async subscribeOrderPush() {
+      throw new AppError('push_unavailable')
+    },
+    async subscribeStaffPush() {
+      throw new AppError('push_unavailable')
+    },
+    async unsubscribePush() {},
+    async staffPushEnabled() {
+      return false
+    },
+
+    async kitchenBoard(key) {
+      await delay(80)
+      const s = load()
+      requireKitchen(s, key)
+      return { topic: s.kitchen!.topic, cafe_name: s.settings.cafe_name, orders: kitchenTickets(s), now: now() }
+    },
+
+    async kitchenAdvance(key, orderId, to) {
+      await delay()
+      mutate((s) => {
+        requireKitchen(s, key)
+        const o = s.orders.find((x) => x.id === orderId)
+        const from = to === 'preparing' ? 'placed' : 'preparing'
+        if (!o || o.status !== from) throw new AppError('conflict')
+        o.status = to
+        if (to === 'preparing') o.preparing_at = now()
+        else o.ready_at = now()
+        o.updated_at = now()
+      }, orderId)
+    },
+
+    watchKitchen(_topic, onChange, onStatus) {
+      const l: Listener = () => onChange()
+      listeners.add(l)
+      setTimeout(() => onStatus('live'), 0)
+      return () => listeners.delete(l)
     },
 
     async getStaffSession() {
@@ -793,6 +1041,29 @@ export function createDemoBackend(): Backend {
       listeners.add(onChange)
       setTimeout(() => onStatus('live' as LiveStatus), 0)
       return () => listeners.delete(onChange)
+    },
+
+    async listServiceRequests() {
+      await delay(60)
+      requireStaff()
+      const since = Date.now() - 2 * 3600000
+      return clone(load().help.filter((h) => !h.resolved_at && Date.parse(h.created_at) >= since)).sort((a, b) => a.created_at.localeCompare(b.created_at))
+    },
+
+    async resolveServiceRequest(id) {
+      await delay()
+      requireStaff()
+      mutate((s) => {
+        const h = s.help.find((x) => x.id === id)
+        if (!h) throw new AppError('not_found')
+        h.resolved_at ??= now()
+      })
+    },
+
+    watchServiceRequests(onChange) {
+      const l: Listener = () => onChange()
+      listeners.add(l)
+      return () => listeners.delete(l)
     },
 
     async saveMenuItem(input: MenuItemInput) {
@@ -1318,6 +1589,175 @@ export function createDemoBackend(): Backend {
       await delay(80)
       requireOwner()
       return clone(load().recipes)
+    },
+
+    async ingredientUsage(fromDay, toDay) {
+      await delay(80)
+      requireOwner()
+      const s = load()
+      const from = cafeDayStartIso(fromDay)
+      const to = cafeDayStartIso(addDays(toDay, 1))
+      return s.ingredients
+        .filter((i) => i.is_active)
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map<IngredientUsage>((i) => {
+          const all = s.ingredientMoves.filter((m) => m.ingredient_id === i.id)
+          const m = all.filter((x) => x.created_at >= from && x.created_at < to)
+          const sum = (kinds: string[], f: (x: IngredientMovement) => number) => m.filter((x) => kinds.includes(x.kind)).reduce((n, x) => n + f(x), 0)
+          const round = (n: number) => Math.round(n * 1000) / 1000
+          return {
+            ingredient_id: i.id,
+            sold: round(-sum(['sale', 'cancel_return'], (x) => x.delta)),
+            used: round(-sum(['usage'], (x) => x.delta)),
+            wasted: round(-sum(['waste'], (x) => x.delta)),
+            purchased: round(sum(['purchase'], (x) => x.delta)),
+            spent: sum(['purchase'], (x) => x.amount ?? 0),
+            count_difference: round(sum(['count'], (x) => x.delta)),
+            counts: m.filter((x) => x.kind === 'count').length,
+            corrected: round(sum(['correction'], (x) => x.delta)),
+            first_movement_at: all.length ? all.map((x) => x.created_at).sort()[0] : null,
+          }
+        })
+    },
+
+    async listOffers() {
+      await delay(80)
+      requireOwner()
+      return clone(load().offers).sort((a, b) => Number(b.is_active) - Number(a.is_active) || a.title.localeCompare(b.title))
+    },
+
+    async saveOffer(input) {
+      await delay()
+      const me = requireOwner()
+      return mutate((s) => {
+        const title = cleanText(input.title)
+        if (!title || title.length > 40) throw new AppError('invalid', 'Give the offer a name (up to 40 characters).')
+        if (!Number.isInteger(input.percent_off) || input.percent_off < 1 || input.percent_off > 90) throw new AppError('invalid', 'The discount must be 1–90 %.')
+        const toMin = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5))
+        if (toMin(input.ends_at) <= toMin(input.starts_at)) throw new AppError('invalid', 'The offer must end after it starts.')
+        if (input.valid_from && input.valid_to && input.valid_to < input.valid_from) throw new AppError('invalid', 'The end date is before the start date.')
+        const keys: (keyof Offer)[] = ['title', 'percent_off', 'menu_item_ids', 'days', 'starts_at', 'ends_at', 'valid_from', 'valid_to', 'is_active']
+        const norm = (t: string) => (t.length === 5 ? `${t}:00` : t)
+        const values: Offer = {
+          ...input, id: input.id ?? uuid(), title, starts_at: norm(input.starts_at), ends_at: norm(input.ends_at),
+          days: [...input.days].sort((a, b) => a - b),
+        }
+        const existing = input.id ? s.offers.find((o) => o.id === input.id) : null
+        if (input.id && !existing) throw new AppError('owner_only')
+        if (existing) {
+          audit(s, me.name, 'offer.updated', 'offer', existing.id, title, diff(existing, values, keys))
+          Object.assign(existing, values)
+        } else {
+          s.offers.push(values)
+          audit(s, me.name, 'offer.created', 'offer', values.id, title, diff(null, values, keys))
+        }
+        return clone(values)
+      })
+    },
+
+    async deleteOffer(id) {
+      await delay()
+      const me = requireOwner()
+      mutate((s) => {
+        const o = s.offers.find((x) => x.id === id)
+        if (!o) throw new AppError('owner_only')
+        s.offers = s.offers.filter((x) => x.id !== id)
+        audit(s, me.name, 'offer.deleted', 'offer', id, o.title, { percent_off: [o.percent_off, null] })
+      })
+    },
+
+    async offerStats(fromDay, toDay) {
+      await delay(80)
+      requireOwner()
+      const from = cafeDayStartIso(fromDay)
+      const to = cafeDayStartIso(addDays(toDay, 1))
+      const stats = new Map<string, OfferStat & { ids: Set<string> }>()
+      for (const o of load().orders) {
+        if (o.status === 'cancelled' || o.created_at < from || o.created_at >= to) continue
+        for (const l of o.items) {
+          if (!l.offer_title) continue
+          const v = stats.get(l.offer_title) ?? { title: l.offer_title, orders: 0, units: 0, discount: 0, sales: 0, ids: new Set<string>() }
+          v.ids.add(o.id)
+          v.units += l.quantity
+          v.discount += (l.discount ?? 0) * l.quantity
+          v.sales += l.line_total
+          stats.set(l.offer_title, v)
+        }
+      }
+      return [...stats.values()].map(({ ids, ...v }) => ({ ...v, orders: ids.size })).sort((a, b) => b.discount - a.discount)
+    },
+
+    async listFeedback(fromDay, toDay) {
+      await delay(80)
+      requireOwner()
+      const s = load()
+      const from = cafeDayStartIso(fromDay)
+      const to = cafeDayStartIso(addDays(toDay, 1))
+      return Object.entries(s.feedback)
+        .filter(([, f]) => f.created_at >= from && f.created_at < to)
+        .flatMap<FeedbackEntry>(([orderId, f]) => {
+          const o = s.orders.find((x) => x.id === orderId)
+          if (!o) return []
+          return [{
+            order_id: orderId, rating: f.rating, comment: f.comment, created_at: f.created_at, order_no: o.order_no,
+            customer_name: o.customer_name, table_label: o.table_label, items: o.items.map((i) => `${i.quantity}× ${i.name}`).join(', '),
+          }]
+        })
+        .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    },
+
+    async dayCloseSummary(day) {
+      await delay(80)
+      requireOwner()
+      return daySummary(load(), day)
+    },
+
+    async closeDay(input) {
+      await delay()
+      const me = requireOwner()
+      const summary = daySummary(load(), input.day)
+      if (input.day < addDays(cafeDate(), -62)) throw new AppError('invalid_range')
+      const ok = (n: number) => Number.isInteger(n) && n >= 0 && n <= 10_000_000
+      if (!ok(input.opening_float) || !ok(input.paid_out) || !ok(input.counted)) throw new AppError('invalid_amount')
+      const note = input.note ? cleanText(input.note) : ''
+      if (note.length > 200) throw new AppError('invalid_note')
+      return mutate((s) => {
+        const expected = input.opening_float + summary.cash_received - input.paid_out
+        const row: DayClosing = {
+          day: input.day, opening_float: input.opening_float, cash_received: summary.cash_received, cash_paid_out: input.paid_out,
+          expected_cash: expected, counted_cash: input.counted, difference: input.counted - expected, upi_received: summary.upi_received,
+          note: note || null, closed_by_name: me.name, closed_at: now(),
+        }
+        const old = s.closings.find((c) => c.day === input.day)
+        s.closings = [...s.closings.filter((c) => c.day !== input.day), row]
+        audit(s, me.name, old ? 'day.reclosed' : 'day.closed', 'day', input.day, input.day,
+          diff(old ?? null, row, ['counted_cash', 'difference']))
+        return clone(row)
+      })
+    },
+
+    async listDayClosings(fromDay, toDay) {
+      await delay(80)
+      requireOwner()
+      return clone(load().closings.filter((c) => c.day >= fromDay && c.day <= toDay)).sort((a, b) => b.day.localeCompare(a.day))
+    },
+
+    async kitchenLink() {
+      await delay(60)
+      requireOwner()
+      const k = load().kitchen
+      return { key: k?.key ?? null, created_at: k?.created_at ?? null }
+    },
+
+    async resetKitchenLink(enabled) {
+      await delay()
+      const me = requireOwner()
+      return mutate((s) => {
+        const hex = (n: number) => Array.from(crypto.getRandomValues(new Uint8Array(n)), (b) => b.toString(16).padStart(2, '0')).join('')
+        s.kitchen = enabled ? { key: hex(18), topic: hex(16), created_at: now() } : null
+        audit(s, me.name, enabled ? 'kitchen.link_created' : 'kitchen.link_disabled', 'settings', null, 'Kitchen screen', {})
+        return { key: s.kitchen?.key ?? null, created_at: s.kitchen?.created_at ?? null }
+      })
     },
 
     async listAudit({ fromDay, toDay, beforeId, limit = 100 }) {

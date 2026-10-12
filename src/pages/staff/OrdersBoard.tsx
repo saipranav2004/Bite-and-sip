@@ -1,14 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { backend } from '../../backend'
 import { PageBody, PageHeader } from '../../components/admin'
-import { IconBell, IconBellOff, IconPhone, IconPin, IconRefresh } from '../../components/icons'
+import { IconBell, IconBellOff, IconCheck, IconClock, IconPhone, IconPin, IconPrinter, IconRefresh } from '../../components/icons'
+import { AlertsNudge } from '../../components/StaffAlerts'
 import { Banner, Button, Dialog, PaymentBadge, Spinner, StatusBadge, useToast } from '../../components/ui'
+import { HELP_LABEL, useServiceRequests } from '../../hooks/useServiceRequests'
 import { Chime, useStaffOrders } from '../../hooks/useStaffOrders'
 import { friendlyError, toAppError } from '../../lib/errors'
-import { cafeDayStartIso, minutesSince, money, orderCode, timeOfDay } from '../../lib/format'
+import { ago, cafeDayStartIso, minutesSince, money, orderCode, timeOfDay } from '../../lib/format'
+import { printTicket } from '../../lib/printTicket'
+import { isDue, minutesUntil, slotLabel } from '../../lib/schedule'
 import { canMarkPaid, canRevertPayment, paymentDisplay } from '../../lib/orderRules'
 import { readJson, writeJson } from '../../lib/storage'
-import type { OrderStatus, StaffOrder } from '../../lib/types'
+import type { OrderStatus, ServiceRequest, StaffOrder } from '../../lib/types'
+import { usePublicData } from '../../state/publicData'
 import { useStaffSession } from '../../state/staffSession'
 
 type Column = 'placed' | 'preparing' | 'ready'
@@ -35,13 +40,34 @@ export function OrdersBoard() {
     toast(fresh.length === 1 ? `New order ${orderCode(fresh[0].order_no)}` : `${fresh.length} new orders`, 'success')
   })
 
+  const { requests, resolve } = useServiceRequests((fresh) => {
+    chime.current.play()
+    toast(fresh.map((r) => `Table ${r.table_label}: ${HELP_LABEL[r.kind]}`).join(' · '), 'success')
+  })
+
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 30000)
     return () => clearInterval(t)
   }, [])
 
   const open = useMemo(() => (orders ?? []).filter((o) => o.status === 'placed' || o.status === 'preparing' || o.status === 'ready'), [orders])
-  const byStatus = (s: Column) => open.filter((o) => o.status === s)
+  // Pre-orders wait in "Later" until 15 minutes before their pickup time.
+  const later = open.filter((o) => o.status === 'placed' && !isDue(o.scheduled_for, now)).sort((a, b) => a.scheduled_for!.localeCompare(b.scheduled_for!))
+  const byStatus = (s: Column) => open.filter((o) => o.status === s && (s !== 'placed' || isDue(o.scheduled_for, now)))
+
+  // Chime when a pre-order becomes due.
+  const dueIds = useRef<Set<string> | null>(null)
+  useEffect(() => {
+    const due = open.filter((o) => o.status === 'placed' && o.scheduled_for && isDue(o.scheduled_for, now))
+    if (dueIds.current) {
+      const fresh = due.filter((o) => !dueIds.current!.has(o.id))
+      if (fresh.length) {
+        chime.current.play()
+        toast(`Start pre-order ${fresh.map((o) => `${orderCode(o.order_no)} (for ${slotLabel(o.scheduled_for!)})`).join(', ')}`, 'success')
+      }
+    }
+    dueIds.current = new Set(due.map((o) => o.id))
+  }, [open, now, toast])
   const done = useMemo(
     () => (orders ?? []).filter((o) => o.status === 'completed' || o.status === 'cancelled').sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
     [orders],
@@ -145,6 +171,12 @@ export function OrdersBoard() {
         </dl>
       )}
 
+      <AlertsNudge />
+
+      {requests.length > 0 && <HelpRequests requests={requests} onDone={(id) => void resolve(id).catch((e) => toast(friendlyError(e), 'error'))} />}
+
+      {later.length > 0 && <LaterOrders orders={later} now={now} />}
+
       {!soundOn && !soundNudgeHidden && (
         <Banner
           tone="warning"
@@ -202,6 +234,51 @@ export function OrdersBoard() {
   )
 }
 
+function HelpRequests({ requests, onDone }: { requests: ServiceRequest[]; onDone: (id: string) => void }) {
+  return (
+    <section aria-label="Table requests" className="mb-4 rounded-[var(--radius-card)] border-2 border-ink bg-brand-soft p-3">
+      <h2 className="mb-2 flex items-center gap-2 text-sm font-extrabold tracking-wide uppercase">
+        <IconBell size={16} /> Tables asking for you <span className="tabular rounded-full bg-ink px-2 py-0.5 text-white">{requests.length}</span>
+      </h2>
+      <ul className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+        {requests.map((r) => (
+          <li key={r.id} className="flex items-center gap-3 rounded-xl bg-surface px-3 py-2 ring-1 ring-line">
+            <span className="rounded-lg bg-ink px-2 py-1 text-base font-extrabold text-brand">{r.table_label}</span>
+            <span className="min-w-0 flex-1">
+              <span className="block font-bold">{HELP_LABEL[r.kind]}</span>
+              <span className="block text-xs text-muted">{ago(r.created_at)}</span>
+            </span>
+            <Button size="sm" variant="success" onClick={() => onDone(r.id)} aria-label={`Done: Table ${r.table_label} ${HELP_LABEL[r.kind]}`}>
+              <IconCheck size={15} strokeWidth={3} /> Done
+            </Button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+function LaterOrders({ orders, now }: { orders: StaffOrder[]; now: number }) {
+  return (
+    <section aria-label="Pre-orders for later" className="mb-4 rounded-[var(--radius-card)] border border-line bg-surface p-3">
+      <h2 className="mb-2 flex items-center gap-2 text-sm font-extrabold tracking-wide text-ink-2 uppercase">
+        <IconClock size={16} /> Pre-orders for later <span className="tabular rounded-full bg-sunken px-2 py-0.5">{orders.length}</span>
+      </h2>
+      <ul className="divide-y divide-line">
+        {orders.map((o) => (
+          <li key={o.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-sm">
+            <span className="tabular rounded-lg bg-ink px-2 py-0.5 font-extrabold text-brand">{slotLabel(o.scheduled_for!)}</span>
+            <span className="tabular font-extrabold">{orderCode(o.order_no)}</span>
+            <span className="font-semibold">{o.table_label ? `Table ${o.table_label}` : 'Counter'}</span>
+            <span className="min-w-0 flex-1 truncate text-muted">{o.items.map((i) => `${i.quantity}× ${i.name}`).join(', ')}</span>
+            <span className="text-xs text-subtle">moves to New in {Math.max(0, minutesUntil(o.scheduled_for!, now) - 15)} min</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
 function TodayStat({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
     <div className="bg-surface px-4 py-3">
@@ -219,8 +296,13 @@ function OrderCard({
   const { profile } = useStaffSession()
   const [busy, setBusy] = useState<string | null>(null)
   const [dialog, setDialog] = useState<'verify' | 'cash' | 'cancel' | null>(null)
+  const { data } = usePublicData()
   const pay = paymentDisplay(order)
-  const age = minutesSince(order.created_at, now)
+  // Pre-orders are timed from when they became due, not from when they were placed.
+  const startedAt = order.scheduled_for && order.status === 'placed'
+    ? new Date(Math.max(Date.parse(order.created_at), Date.parse(order.scheduled_for) - 15 * 60000)).toISOString()
+    : order.created_at
+  const age = minutesSince(startedAt, now)
   // Ticket timer: calm → amber → red (red reserved for genuinely overdue tickets).
   const [warnAt, lateAt] = order.status === 'placed' ? [3, 5] : order.status === 'preparing' ? [12, 20] : [10, 20]
   const timerStyle = age >= lateAt ? 'bg-danger text-white' : age >= warnAt ? 'bg-brand text-ink' : 'bg-sunken text-ink-2'
@@ -282,8 +364,22 @@ function OrderCard({
             {age < 1 ? 'Now' : `${age} min`}
           </p>
           <p className="tabular mt-0.5 text-xs text-subtle">{timeOfDay(order.created_at)}</p>
+          <button
+            type="button"
+            className="mt-1 inline-grid size-9 place-items-center rounded-lg text-ink-2 hover:bg-sunken"
+            onClick={() => printTicket(order, data?.settings.cafe_name ?? 'Bite & Sip')}
+            aria-label={`Print ticket for ${orderCode(order.order_no)}`}
+            title="Print ticket"
+          >
+            <IconPrinter size={17} />
+          </button>
         </div>
       </header>
+      {order.scheduled_for && (
+        <p className="flex items-center gap-1.5 border-b border-line bg-ink px-4 py-1.5 text-sm font-extrabold text-brand">
+          <IconClock size={15} /> Pre-order · ready by {slotLabel(order.scheduled_for)}
+        </p>
+      )}
 
       <ul className="space-y-1.5 px-4 py-3">
         {order.items.map((l, i) => (

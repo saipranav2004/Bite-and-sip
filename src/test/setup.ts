@@ -11,9 +11,11 @@ if (typeof HTMLDialogElement !== 'undefined' && !HTMLDialogElement.prototype.sho
     this.removeAttribute('open')
   }
 }
-window.scrollTo = () => {}
-
-afterEach(() => {
-  cleanup()
-  localStorage.clear()
-})
+// Some tests (crypto) run in the node environment.
+if (typeof window !== 'undefined') {
+  window.scrollTo = () => {}
+  afterEach(() => {
+    cleanup()
+    localStorage.clear()
+  })
+}

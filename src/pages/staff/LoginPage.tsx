@@ -1,4 +1,5 @@
-import { useId, useState, type FormEvent } from 'react'
+import { setManifest } from '../../lib/push'
+import { useEffect, useId, useState, type FormEvent } from 'react'
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { isDemo } from '../../backend'
 import { DEMO_ACCOUNTS } from '../../backend/demo'
@@ -8,6 +9,10 @@ import { toLoginEmail } from '../../lib/validation'
 import { useStaffSession } from '../../state/staffSession'
 
 export function LoginPage() {
+  useEffect(() => {
+    setManifest('/manifest-staff.webmanifest')
+    return () => setManifest('/manifest.webmanifest')
+  }, [])
   const { profile, loading, signIn } = useStaffSession()
   const navigate = useNavigate()
   const location = useLocation()

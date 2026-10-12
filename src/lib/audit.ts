@@ -20,6 +20,7 @@ export function categoryOf(e: AuditEntry): AuditCategory {
     case 'category':
     case 'cost':
     case 'recipe':
+    case 'offer':
       return 'menu'
     case 'ingredient':
       return 'stock'
@@ -28,6 +29,7 @@ export function categoryOf(e: AuditEntry): AuditCategory {
     case 'stock':
       return 'stock'
     case 'expense':
+    case 'day':
       return 'money'
     default:
       return 'team'
@@ -37,7 +39,8 @@ export function categoryOf(e: AuditEntry): AuditCategory {
 /** Changes worth a second look: where money goes, who has access, and reversals. */
 export function isSensitive(e: AuditEntry): boolean {
   if (e.entity === 'staff') return true
-  if (e.action === 'order.marked_unpaid' || e.action === 'expense.deleted') return true
+  if (e.action === 'order.marked_unpaid' || e.action === 'expense.deleted' || e.action === 'day.reclosed') return true
+  if (e.action.startsWith('kitchen.')) return true
   if (e.entity === 'settings' && ('upi_id' in e.changes || 'upi_payee_name' in e.changes)) return true
   return false
 }
@@ -56,6 +59,8 @@ const FIELD_LABEL: Record<string, string> = {
   upi_id: 'UPI ID', upi_payee_name: 'UPI payee name', is_open: 'Taking orders', closed_message: 'Closed message', cafe_name: 'Café name',
   role: 'Role', is_active: 'Access', display_name: 'Name', user_id: 'User',
   payment_status: 'Payment', payment_reference: 'Reference', status: 'Status', cancel_reason: 'Reason',
+  title: 'Name', percent_off: 'Discount', menu_item_ids: 'Items', days: 'Days', starts_at: 'From', ends_at: 'Until', valid_from: 'Starts on',
+  valid_to: 'Ends on', counted_cash: 'Counted cash', difference: 'Difference',
   on_hand: 'On hand', low_at: 'Low-stock level', quantity: 'Quantity', display_unit: 'Unit', note: 'Note', amount: 'Amount', spent_on: 'Date', category: 'Category', label: 'Table',
 }
 
@@ -67,10 +72,25 @@ export function formatValue(field: string, v: unknown, ctx: AuditContext, entity
     case 'price':
     case 'cost':
     case 'amount':
+    case 'counted_cash':
+    case 'difference':
       return money(Number(v))
+    case 'percent_off':
+      return `${v}%`
+    case 'menu_item_ids':
+      return Array.isArray(v) ? (v.length ? `${v.length} item(s)` : 'Whole menu') : String(v)
+    case 'days':
+      return Array.isArray(v) ? (v.length ? v.map((d) => ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][Number(d) - 1]).join(', ') : 'Every day') : String(v)
+    case 'starts_at':
+    case 'ends_at':
+      return String(v).slice(0, 5)
+    case 'valid_from':
+    case 'valid_to':
+      return formatDay(String(v))
     case 'is_available':
       return v ? (entity === 'table' ? 'Active' : 'Available') : entity === 'table' ? 'Inactive' : 'Sold out'
     case 'is_active':
+      if (entity === 'offer') return v ? 'On' : 'Paused'
       return v ? (entity === 'table' ? 'Active' : 'Can sign in') : entity === 'table' ? 'Inactive' : 'Access removed'
     case 'is_open':
       return v ? 'Open' : 'Closed'
@@ -105,7 +125,7 @@ export function fieldChanges(e: AuditEntry, ctx: AuditContext): FieldChange[] {
     .filter(([f]) => !HIDDEN.has(f))
     .map(([field, [before, after]]) => ({
       field,
-      label: FIELD_LABEL[field] ?? field.replaceAll('_', ' '),
+      label: e.entity === 'offer' && field === 'is_active' ? 'Status' : (FIELD_LABEL[field] ?? field.replaceAll('_', ' ')),
       before: formatValue(field, before, ctx, e.entity),
       after: formatValue(field, after, ctx, e.entity),
       mono: field === 'upi_id' || field === 'payment_reference',
@@ -185,6 +205,15 @@ export function describe(e: AuditEntry): string {
     case 'recipe.added': return `added ${what.split(' › ')[1] ?? what} to the recipe of ${what.split(' › ')[0]}`
     case 'recipe.changed': return `changed the recipe of ${what.split(' › ')[0]} (${what.split(' › ')[1] ?? ''})`
     case 'recipe.removed': return `removed ${what.split(' › ')[1] ?? what} from the recipe of ${what.split(' › ')[0]}`
+    case 'offer.created': return `created the offer ${what}`
+    case 'offer.updated':
+      if (only.length === 1 && only[0] === 'is_active') return e.changes.is_active?.[1] ? `turned on the offer ${what}` : `paused the offer ${what}`
+      return `edited the offer ${what}`
+    case 'offer.deleted': return `deleted the offer ${what}`
+    case 'day.closed': return `closed the day (${what})`
+    case 'day.reclosed': return `changed the closing for ${what}`
+    case 'kitchen.link_created': return 'made a new kitchen screen link'
+    case 'kitchen.link_disabled': return 'turned off the kitchen screen'
     case 'expense.created': return `logged an expense (${expenseLabel(what)})`
     case 'expense.updated': return `edited an expense (${expenseLabel(what)})`
     case 'expense.deleted': return `deleted an expense (${expenseLabel(what)})`

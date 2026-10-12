@@ -152,7 +152,7 @@ function order(p: Partial<StaffOrder>): StaffOrder {
   return {
     id: crypto.randomUUID(), order_no: 1, customer_name: 'A', customer_phone: '9876543210', table_label: null,
     status: 'completed', payment_method: 'cash', payment_status: 'paid', customer_reported_paid_at: null,
-    payment_reference: null, total: 100, item_count: 1, cancel_reason: null, cancelled_by: null,
+    payment_reference: null, total: 100, item_count: 1, cancel_reason: null, cancelled_by: null, scheduled_for: null,
     created_at: '2026-10-10T06:00:00Z', updated_at: '2026-10-10T06:00:00Z', preparing_at: null, ready_at: null,
     completed_at: null, cancelled_at: null, paid_at: null,
     items: [{ name: 'Masala Chai', base_price: 15, addons: [], unit_price: 15, quantity: 1, line_total: 15, note: null }],

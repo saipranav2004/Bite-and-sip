@@ -60,7 +60,7 @@ describe('computeProfitAndLoss (demo mirror of the database function)', () => {
   const order = (o: Partial<CostedOrder>): CostedOrder => ({
     id: crypto.randomUUID(), order_no: 1, customer_name: 'A', customer_phone: '9876543210', table_label: null,
     status: 'completed', payment_method: 'cash', payment_status: 'paid', customer_reported_paid_at: null, payment_reference: null,
-    total: 0, item_count: 0, cancel_reason: null, cancelled_by: null, created_at: at('2026-10-02'), updated_at: '', preparing_at: null,
+    total: 0, item_count: 0, cancel_reason: null, cancelled_by: null, scheduled_for: null, created_at: at('2026-10-02'), updated_at: '', preparing_at: null,
     ready_at: null, completed_at: null, cancelled_at: null, paid_at: null, items: [], line_costs: [], ...o,
   })
   const line = (name: string, unit: number, qty: number) => ({ name, base_price: unit, addons: [], unit_price: unit, quantity: qty, line_total: unit * qty, note: null })

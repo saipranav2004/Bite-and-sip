@@ -1,23 +1,16 @@
 import { useEffect, useState } from 'react'
-import { Navigate, NavLink, Outlet, useLocation } from 'react-router-dom'
+import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { backend, isDemo } from '../../backend'
 import {
-  IconBoard, IconBox, IconChart, IconHistory, IconLogOut, IconMenuBook, IconMore, IconSettings, IconTrend, IconWallet,
+  IconBoard, IconBox, IconChart, IconHistory, IconLogOut, IconMenuBook, IconMore, IconReceipt, IconSettings, IconStar, IconTag, IconTrend, IconWallet,
+  IconLightbulb,
 } from '../../components/icons'
-import { Button, Dialog, Spinner, useToast, Wordmark } from '../../components/ui'
+import { setManifest } from '../../lib/push'
+import { Button, Dialog, useToast, Wordmark } from '../../components/ui'
 import { friendlyError } from '../../lib/errors'
 import type { StaffProfile } from '../../lib/types'
 import { usePublicData } from '../../state/publicData'
 import { useStaffSession } from '../../state/staffSession'
-
-export function RequireStaff({ ownerOnly = false, children }: { ownerOnly?: boolean; children: React.ReactNode }) {
-  const { profile, loading } = useStaffSession()
-  const location = useLocation()
-  if (loading) return <div className="grid min-h-dvh place-items-center"><Spinner label="Checking your session" /></div>
-  if (!profile) return <Navigate to="/staff/login" replace state={{ from: location.pathname }} />
-  if (ownerOnly && profile.role !== 'owner') return <Navigate to="/staff" replace />
-  return <>{children}</>
-}
 
 type Icon = typeof IconBoard
 interface NavEntry {
@@ -35,14 +28,23 @@ const GROUPS: { label: string; items: NavEntry[] }[] = [
       { to: '/staff', label: 'Orders', icon: IconBoard, end: true },
       { to: '/staff/menu', label: 'Menu', icon: IconMenuBook },
       { to: '/staff/inventory', label: 'Inventory', icon: IconBox },
+      { to: '/staff/offers', label: 'Offers', icon: IconTag, owner: true },
     ],
   },
   {
     label: 'Money',
     items: [
       { to: '/staff/reports', label: 'Sales', icon: IconChart, owner: true },
+      { to: '/staff/close-day', label: 'Close the day', icon: IconReceipt, owner: true },
       { to: '/staff/profit', label: 'Profit & loss', icon: IconTrend, owner: true },
       { to: '/staff/expenses', label: 'Expenses', icon: IconWallet, owner: true },
+    ],
+  },
+  {
+    label: 'Insights',
+    items: [
+      { to: '/staff/insights', label: 'Menu insights', icon: IconLightbulb, owner: true },
+      { to: '/staff/feedback', label: 'Feedback', icon: IconStar, owner: true },
     ],
   },
   {
@@ -85,6 +87,11 @@ export function StaffLayout() {
   const lowStock = useLowStockCount(profile?.role === 'owner')
 
   useEffect(() => setMoreOpen(false), [location.pathname])
+  // Installing from the console gives an app that opens on the orders board.
+  useEffect(() => {
+    setManifest('/manifest-staff.webmanifest')
+    return () => setManifest('/manifest.webmanifest')
+  }, [])
 
   if (!profile) return null
   const owner = profile.role === 'owner'
